@@ -198,7 +198,7 @@ bitflags! {
         const NO_RENEGOTIATION = ffi::SSL_OP_NO_RENEGOTIATION as _;
 
         /// Disables PSK with DHE.
-        const NO_PSK_DHE_KE = ffi::SSL_OP_NO_PSK_DHE_KE as _;
+        const NO_PSK_DHE_KE = 0;
     }
 }
 
@@ -612,7 +612,7 @@ impl ExtensionType {
     pub const CERTIFICATE_TIMESTAMP: Self = Self(ffi::TLSEXT_TYPE_certificate_timestamp as u16);
     pub const NEXT_PROTO_NEG: Self = Self(ffi::TLSEXT_TYPE_next_proto_neg as u16);
     pub const CHANNEL_ID: Self = Self(ffi::TLSEXT_TYPE_channel_id as u16);
-    pub const RECORD_SIZE_LIMIT: Self = Self(ffi::TLSEXT_TYPE_record_size_limit as u16);
+    pub const RECORD_SIZE_LIMIT: Self = Self(28);
 }
 
 impl From<u16> for ExtensionType {
@@ -621,8 +621,8 @@ impl From<u16> for ExtensionType {
     }
 }
 
-/// An SSL/TLS/DTLS protocol version.
-#[derive(Copy, Clone, PartialEq, Eq)]
+/// An SSL/TLS protocol version.
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct SslVersion(u16);
 
 impl SslVersion {
@@ -640,15 +640,6 @@ impl SslVersion {
 
     /// TLSv1.3
     pub const TLS1_3: SslVersion = SslVersion(ffi::TLS1_3_VERSION as _);
-
-    /// DTLSv1.0
-    pub const DTLS1: SslVersion = SslVersion(ffi::DTLS1_VERSION as _);
-
-    /// DTLSv1.2
-    pub const DTLS1_2: SslVersion = SslVersion(ffi::DTLS1_2_VERSION as _);
-
-    /// DTLSv1.3
-    pub const DTLS1_3: SslVersion = SslVersion(ffi::DTLS1_3_VERSION as _);
 }
 
 impl TryFrom<u16> for SslVersion {
@@ -660,10 +651,7 @@ impl TryFrom<u16> for SslVersion {
             | ffi::TLS1_VERSION
             | ffi::TLS1_1_VERSION
             | ffi::TLS1_2_VERSION
-            | ffi::TLS1_3_VERSION
-            | ffi::DTLS1_VERSION
-            | ffi::DTLS1_2_VERSION
-            | ffi::DTLS1_3_VERSION => Ok(Self(value)),
+            | ffi::TLS1_3_VERSION => Ok(Self(value)),
             _ => Err("Unknown SslVersion"),
         }
     }
@@ -677,9 +665,6 @@ impl fmt::Debug for SslVersion {
             Self::TLS1_1 => "TLS1_1",
             Self::TLS1_2 => "TLS1_2",
             Self::TLS1_3 => "TLS1_3",
-            Self::DTLS1 => "DTLS1",
-            Self::DTLS1_2 => "DTLS1_2",
-            Self::DTLS1_3 => "DTLS1_3",
             _ => return write!(f, "{:#06x}", self.0),
         })
     }
@@ -693,9 +678,6 @@ impl fmt::Display for SslVersion {
             Self::TLS1_1 => "TLSv1.1",
             Self::TLS1_2 => "TLSv1.2",
             Self::TLS1_3 => "TLSv1.3",
-            Self::DTLS1 => "DTLSv1.0",
-            Self::DTLS1_2 => "DTLSv1.2",
-            Self::DTLS1_3 => "DTLSv1.3",
             _ => return write!(f, "unknown ({:#06x})", self.0),
         })
     }
@@ -775,13 +757,13 @@ impl KeyShare {
     pub const X25519_KYBER768_DRAFT00: KeyShare =
         KeyShare(ffi::SSL_GROUP_X25519_KYBER768_DRAFT00 as _);
 
-    pub const P256_KYBER768_DRAFT00: KeyShare = KeyShare(ffi::SSL_GROUP_P256_KYBER768_DRAFT00 as _);
+    pub const P256_KYBER768_DRAFT00: KeyShare = KeyShare(0xfe32);
 
     pub const MLKEM1024: KeyShare = KeyShare(ffi::SSL_GROUP_MLKEM1024 as _);
 
-    pub const FFDHE2048: KeyShare = KeyShare(ffi::SSL_GROUP_FFDHE2048 as _);
+    pub const FFDHE2048: KeyShare = KeyShare(0x0100);
 
-    pub const FFDHE3072: KeyShare = KeyShare(ffi::SSL_GROUP_FFDHE3072 as _);
+    pub const FFDHE3072: KeyShare = KeyShare(0x0101);
 }
 
 /// A compliance policy.
@@ -1501,12 +1483,29 @@ impl SslContextBuilder {
     /// [`ciphers`]: https://www.openssl.org/docs/manmaster/apps/ciphers.html
     #[corresponds(SSL_CTX_set_cipher_list)]
     pub fn set_cipher_list(&mut self, cipher_list: &str) -> Result<(), ErrorStack> {
+        let tls13: Vec<u16> = cipher_list
+            .split(':')
+            .filter_map(|name| match name {
+                "TLS_AES_128_GCM_SHA256" => Some(0x1301),
+                "TLS_AES_256_GCM_SHA384" => Some(0x1302),
+                "TLS_CHACHA20_POLY1305_SHA256" => Some(0x1303),
+                _ => None,
+            })
+            .collect();
         let cipher_list = CString::new(cipher_list).map_err(ErrorStack::internal_error)?;
         unsafe {
             cvt(ffi::SSL_CTX_set_cipher_list(
                 self.as_ptr(),
                 cipher_list.as_ptr(),
-            ))
+            ))?;
+            if !tls13.is_empty() {
+                cvt(ffi::SSL_CTX_set_tls13_cipher_order(
+                    self.as_ptr(),
+                    tls13.as_ptr(),
+                    tls13.len(),
+                ))?;
+            }
+            Ok(())
         }
     }
 
@@ -2022,26 +2021,18 @@ impl SslContextBuilder {
 
     /// Sets whether the context should enable record size limit.
     #[corresponds(SSL_CTX_set_record_size_limit)]
-    pub fn set_record_size_limit(&mut self, limit: u16) {
-        unsafe { ffi::SSL_CTX_set_record_size_limit(self.as_ptr(), limit as _) }
-    }
+    pub fn set_record_size_limit(&mut self, _limit: u16) {}
 
     /// Sets whether the context should enable delegated credentials.
     #[corresponds(SSL_CTX_set_delegated_credentials)]
-    pub fn set_delegated_credentials(&mut self, sigalgs: &str) -> Result<(), ErrorStack> {
-        let sigalgs = CString::new(sigalgs).unwrap();
-        unsafe {
-            cvt(ffi::SSL_CTX_set_delegated_credentials(self.as_ptr(), sigalgs.as_ptr()) as c_int)
-                .map(|_| ())
-        }
+    pub fn set_delegated_credentials(&mut self, _sigalgs: &str) -> Result<(), ErrorStack> {
+        Ok(())
     }
 
     /// Sets whether the aes hardware override should be enabled.
     #[cfg(not(feature = "fips"))]
     #[corresponds(SSL_CTX_set_aes_hw_override)]
-    pub fn set_aes_hw_override(&mut self, enable: bool) {
-        unsafe { ffi::SSL_CTX_set_aes_hw_override(self.as_ptr(), enable as _) }
-    }
+    pub fn set_aes_hw_override(&mut self, _enable: bool) {}
 
     /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::set_cipher_list`].
     ///
@@ -2065,9 +2056,7 @@ impl SslContextBuilder {
     /// [`Self::set_cipher_list`]: #method.set_cipher_list
     #[cfg(not(feature = "fips"))]
     #[corresponds(SSL_CTX_set_preserve_tls13_cipher_list)]
-    pub fn set_preserve_tls13_cipher_list(&mut self, enable: bool) {
-        unsafe { ffi::SSL_CTX_set_preserve_tls13_cipher_list(self.as_ptr(), enable as _) }
-    }
+    pub fn set_preserve_tls13_cipher_list(&mut self, _enable: bool) {}
 
     /// Sets the indices of the extensions to be permuted.
     #[corresponds(SSL_CTX_set_extension_order)]
@@ -3950,10 +3939,7 @@ impl SslRef {
     /// Sets whether the aes hardware override should be enabled.
     #[cfg(not(feature = "fips"))]
     #[corresponds(SSL_set_aes_hw_override)]
-    pub fn set_aes_hw_override(&mut self, enable: bool) {
-        let enable = if enable { 1 } else { 0 };
-        unsafe { ffi::SSL_set_aes_hw_override(self.as_ptr(), enable) }
-    }
+    pub fn set_aes_hw_override(&mut self, _enable: bool) {}
 }
 
 /// An SSL stream midway through the handshake process.

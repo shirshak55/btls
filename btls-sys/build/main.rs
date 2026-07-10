@@ -468,22 +468,16 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
         run_command(Command::new("git").arg("init").current_dir(src_path))?;
     }
 
-    println!("cargo:warning=applying post quantum crypto patch to boringssl");
-    apply_patch(config, "boring-pq.patch")?;
-
-    println!("cargo:warning=applying patch to boringssl");
-    apply_patch(config, "boringssl.patch")?;
-
     println!("cargo:warning=applying loongarch patch to boringssl");
     apply_patch(config, "boringssl-loongarch.patch")?;
-
-    println!("cargo:warning=applying windows cross compile patch to boringssl");
-    apply_patch(config, "boringssl-windows.patch")?;
 
     if config.features.underscore_wildcards {
         println!("cargo:warning=applying underscore wildcards patch to boringssl");
         apply_patch(config, "underscore-wildcards.patch")?;
     }
+
+    println!("cargo:warning=applying WireMason ClientHello controls to BoringSSL");
+    apply_patch(config, "wiremason-clienthello.patch")?;
 
     Ok(())
 }
