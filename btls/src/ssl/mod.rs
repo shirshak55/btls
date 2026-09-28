@@ -765,6 +765,12 @@ impl KeyShare {
     pub const FFDHE2048: KeyShare = KeyShare(ffi::SSL_GROUP_FFDHE2048 as _);
 
     pub const FFDHE3072: KeyShare = KeyShare(ffi::SSL_GROUP_FFDHE3072 as _);
+
+    pub const FFDHE4096: KeyShare = KeyShare(ffi::SSL_GROUP_FFDHE4096 as _);
+
+    pub const FFDHE6144: KeyShare = KeyShare(ffi::SSL_GROUP_FFDHE6144 as _);
+
+    pub const FFDHE8192: KeyShare = KeyShare(ffi::SSL_GROUP_FFDHE8192 as _);
 }
 
 /// A compliance policy.
