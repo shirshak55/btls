@@ -2221,6 +2221,64 @@ impl SslContextBuilder {
         }
     }
 
+    /// Sets the context's preferred groups (named groups / key-exchange curves) by their
+    /// TLS wire ids, in preference order. On a server this pins which group the ServerHello
+    /// selects — and, when the highest-preference group has no matching client key share,
+    /// makes the server send a HelloRetryRequest for it, so an origin's HRR behaviour can be
+    /// reproduced downstream. The ids are the `SSL_GROUP_*` values (e.g. `0x001d` for
+    /// X25519, `0x0102` for ffdhe4096).
+    #[corresponds(SSL_CTX_set1_group_ids)]
+    pub fn set_group_ids(&mut self, ids: &[u16]) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_CTX_set1_group_ids(
+                self.as_ptr(),
+                ids.as_ptr(),
+                ids.len(),
+            ))
+            .map(|_| ())
+        }
+    }
+
+    /// Sets the TLS 1.3 cipher-suite preference order by wire id (e.g. `0x1301` for
+    /// TLS_AES_128_GCM_SHA256), highest preference first. Unlike [`Self::set_cipher_list`],
+    /// this only orders the TLS 1.3 suites and does not touch the pre-1.3 cipher list, so a
+    /// server can pin which TLS 1.3 suite it selects (placing the origin's chosen suite
+    /// first) without clearing its classic ciphers.
+    #[corresponds(SSL_CTX_set_tls13_cipher_order)]
+    pub fn set_tls13_cipher_order(&mut self, ids: &[u16]) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_CTX_set_tls13_cipher_order(
+                self.as_ptr(),
+                ids.as_ptr(),
+                ids.len(),
+            ))
+            .map(|_| ())
+        }
+    }
+
+    /// Sets how many NewSessionTicket messages a server sends immediately after a
+    /// successful handshake (default two), so a downstream server can match the ticket
+    /// count an origin issued.
+    #[corresponds(SSL_CTX_set_num_tickets)]
+    pub fn set_num_tickets(&mut self, num_tickets: usize) -> Result<(), ErrorStack> {
+        unsafe { cvt(ffi::SSL_CTX_set_num_tickets(self.as_ptr(), num_tickets)).map(|_| ()) }
+    }
+
+    /// Sets the DER-encoded OCSP response a server staples to clients that request it, so a
+    /// downstream server can staple an OCSP response (generated for its own leaf) whenever
+    /// the origin stapled one. Enable stapling requests separately if acting as a client.
+    #[corresponds(SSL_CTX_set_ocsp_response)]
+    pub fn set_ocsp_response(&mut self, response: &[u8]) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_CTX_set_ocsp_response(
+                self.as_ptr(),
+                response.as_ptr(),
+                response.len(),
+            ))
+            .map(|_| ())
+        }
+    }
+
     /// Sets the context's compliance policy.
     ///
     /// This feature isn't available in the certified version of BoringSSL.
