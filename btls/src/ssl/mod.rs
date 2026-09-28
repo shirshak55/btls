@@ -198,7 +198,7 @@ bitflags! {
         const NO_RENEGOTIATION = ffi::SSL_OP_NO_RENEGOTIATION as _;
 
         /// Disables PSK with DHE.
-        const NO_PSK_DHE_KE = 0;
+        const NO_PSK_DHE_KE = ffi::SSL_OP_NO_PSK_DHE_KE as _;
     }
 }
 
@@ -612,7 +612,8 @@ impl ExtensionType {
     pub const CERTIFICATE_TIMESTAMP: Self = Self(ffi::TLSEXT_TYPE_certificate_timestamp as u16);
     pub const NEXT_PROTO_NEG: Self = Self(ffi::TLSEXT_TYPE_next_proto_neg as u16);
     pub const CHANNEL_ID: Self = Self(ffi::TLSEXT_TYPE_channel_id as u16);
-    pub const RECORD_SIZE_LIMIT: Self = Self(28);
+    pub const RECORD_SIZE_LIMIT: Self = Self(ffi::TLSEXT_TYPE_record_size_limit as u16);
+    pub const ENCRYPT_THEN_MAC: Self = Self(ffi::TLSEXT_TYPE_encrypt_then_mac as u16);
 }
 
 impl From<u16> for ExtensionType {
@@ -761,9 +762,9 @@ impl KeyShare {
 
     pub const MLKEM1024: KeyShare = KeyShare(ffi::SSL_GROUP_MLKEM1024 as _);
 
-    pub const FFDHE2048: KeyShare = KeyShare(0x0100);
+    pub const FFDHE2048: KeyShare = KeyShare(ffi::SSL_GROUP_FFDHE2048 as _);
 
-    pub const FFDHE3072: KeyShare = KeyShare(0x0101);
+    pub const FFDHE3072: KeyShare = KeyShare(ffi::SSL_GROUP_FFDHE3072 as _);
 }
 
 /// A compliance policy.
@@ -2019,14 +2020,68 @@ impl SslContextBuilder {
         unsafe { ffi::SSL_CTX_set_grease_enabled(self.as_ptr(), enabled as _) }
     }
 
-    /// Sets whether the context should enable record size limit.
+    /// Sets the record size limit (RFC 8449) clients offer, or none if zero. Records sent after
+    /// the server answers with its own limit are no larger than it allows.
     #[corresponds(SSL_CTX_set_record_size_limit)]
-    pub fn set_record_size_limit(&mut self, _limit: u16) {}
+    pub fn set_record_size_limit(&mut self, limit: u16) {
+        unsafe { ffi::SSL_CTX_set_record_size_limit(self.as_ptr(), limit) }
+    }
 
-    /// Sets whether the context should enable delegated credentials.
+    /// Sets the colon-separated signature algorithms with which clients accept delegated
+    /// credentials (RFC 9345), which they then offer and verify. An empty list offers none.
     #[corresponds(SSL_CTX_set_delegated_credentials)]
-    pub fn set_delegated_credentials(&mut self, _sigalgs: &str) -> Result<(), ErrorStack> {
-        Ok(())
+    pub fn set_delegated_credentials(&mut self, sigalgs: &str) -> Result<(), ErrorStack> {
+        let sigalgs = CString::new(sigalgs).map_err(ErrorStack::internal_error)?;
+        unsafe {
+            cvt(ffi::SSL_CTX_set_delegated_credentials(
+                self.as_ptr(),
+                sigalgs.as_ptr(),
+            ))
+            .map(|_| ())
+        }
+    }
+
+    /// Sets whether the extension order set with [`Self::set_extension_permutation`] is the
+    /// ClientHello's whole extension list: the listed extensions are sent in that order, each
+    /// when its configuration calls for it, and no others. A GREASE value places a GREASE
+    /// extension, [`ExtensionType::PADDING`] a padding extension of
+    /// [`Self::set_padding_length`] bytes, and [`ExtensionType::ENCRYPT_THEN_MAC`] an
+    /// encrypt_then_mac extension when no CBC cipher suite is offered.
+    #[corresponds(SSL_CTX_set_strict_extension_order)]
+    pub fn set_strict_extension_order(&mut self, enabled: bool) {
+        unsafe { ffi::SSL_CTX_set_strict_extension_order(self.as_ptr(), enabled as _) }
+    }
+
+    /// Sets whether clients start their signature_algorithms extension with a GREASE value.
+    #[corresponds(SSL_CTX_set_grease_signature_algorithms)]
+    pub fn set_grease_signature_algorithms(&mut self, enabled: bool) {
+        unsafe { ffi::SSL_CTX_set_grease_signature_algorithms(self.as_ptr(), enabled as _) }
+    }
+
+    /// Sets the length of the padding extension a strict extension order places.
+    #[corresponds(SSL_CTX_set_padding_length)]
+    pub fn set_padding_length(&mut self, len: u16) {
+        unsafe { ffi::SSL_CTX_set_padding_length(self.as_ptr(), len) }
+    }
+
+    /// Sets whether clients end their cipher suite list with TLS_EMPTY_RENEGOTIATION_INFO_SCSV.
+    #[corresponds(SSL_CTX_set_renegotiation_scsv)]
+    pub fn set_renegotiation_scsv(&mut self, enabled: bool) {
+        unsafe { ffi::SSL_CTX_set_renegotiation_scsv(self.as_ptr(), enabled as _) }
+    }
+
+    /// Sets the trust anchor IDs clients request, as the encoded list of the trust_anchors
+    /// extension.
+    #[corresponds(SSL_CTX_set1_requested_trust_anchors)]
+    pub fn set_requested_trust_anchors(&mut self, ids: &[u8]) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_CTX_set1_requested_trust_anchors(
+                self.as_ptr(),
+                ids.as_ptr(),
+                ids.len(),
+            ))
+            .map(|_| ())
+        }
     }
 
     /// Sets whether the aes hardware override should be enabled.
