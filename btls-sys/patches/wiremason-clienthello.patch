@@ -286,7 +286,7 @@ index d23c16d..9c287a4 100644
  OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_256_cbc_sha1_tls(void);
  OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_256_cbc_sha1_tls_implicit_iv(void);
 diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
-index 055b3e0..01046bf 100644
+index 055b3e0..9897cd5 100644
 --- a/include/openssl/ssl.h
 +++ b/include/openssl/ssl.h
 @@ -620,6 +620,14 @@ OPENSSL_EXPORT int SSL_version(const SSL *ssl);
@@ -337,7 +337,7 @@ index 055b3e0..01046bf 100644
  
  // SSL_CTX_set1_group_ids sets the preferred groups for |ctx| to |group_ids|.
  // Each element of |group_ids| should be a unique one of the |SSL_GROUP_*|
-@@ -5508,6 +5535,57 @@ OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
+@@ -5508,6 +5535,66 @@ OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
  // permute extensions. For now, this is only implemented for the ClientHello.
  OPENSSL_EXPORT void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled);
  
@@ -385,6 +385,15 @@ index 055b3e0..01046bf 100644
 +// sent after the server answers with its own limit are no larger than it allows.
 +OPENSSL_EXPORT void SSL_CTX_set_record_size_limit(SSL_CTX *ctx, uint16_t limit);
 +
++// SSL_CTX_set_session_id_length configures clients on |ctx| to send a random
++// legacy_session_id of |len| bytes, at most 32, in a ClientHello that resumes
++// no session by ID or TLS 1.2 ticket, in place of the 32 bytes of TLS 1.3
++// compatibility mode or the empty one otherwise; a negative |len| restores
++// that. A TLS 1.3 client sending an empty one also sends no compatibility mode
++// ChangeCipherSpec. It does not apply to QUIC or DTLS. It returns one on
++// success and zero if |len| is too long.
++OPENSSL_EXPORT int SSL_CTX_set_session_id_length(SSL_CTX *ctx, int len);
++
 +// SSL_CTX_set_delegated_credentials configures clients on |ctx| to offer
 +// delegated credentials (RFC 9345) signed with the colon-separated signature
 +// algorithms in |sigalgs|, in the format of |SSL_CTX_set1_sigalgs_list|, and to
@@ -395,7 +404,7 @@ index 055b3e0..01046bf 100644
  // SSL_set_permute_extensions configures whether sockets on |ssl| should
  // permute extensions. For now, this is only implemented for the ClientHello.
  OPENSSL_EXPORT void SSL_set_permute_extensions(SSL *ssl, int enabled);
-@@ -5891,7 +5969,6 @@ DEFINE_STACK_OF(SSL_COMP)
+@@ -5891,7 +5978,6 @@ DEFINE_STACK_OF(SSL_COMP)
  #define SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG 0
  #define SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG 0
  #define SSL_OP_NO_COMPRESSION 0
@@ -822,7 +831,7 @@ index db1a291..c7c49b3 100644
    // In cleartext ClientHellos, we add the padding extension to work around
    // bugs. We also apply this padding to ClientHelloOuter, to keep the wire
 diff --git a/ssl/handshake_client.cc b/ssl/handshake_client.cc
-index 7ab6d2c..1df8e30 100644
+index 7ab6d2c..dd4592e 100644
 --- a/ssl/handshake_client.cc
 +++ b/ssl/handshake_client.cc
 @@ -26,6 +26,7 @@
@@ -865,7 +874,49 @@ index 7ab6d2c..1df8e30 100644
    if (ssl->mode & SSL_MODE_SEND_FALLBACK_SCSV) {
      if (!CBB_add_u16(&child, SSL_CIPHER_FALLBACK_SCSV)) {
        return false;
-@@ -1051,7 +1068,24 @@ static enum ssl_hs_wait_t do_read_server_key_exchange(SSL_HANDSHAKE *hs) {
+@@ -420,18 +437,26 @@ static enum ssl_hs_wait_t do_start_connect(SSL_HANDSHAKE *hs) {
+   }
+ 
+   // Compatibility mode sends a random session ID. Compatibility mode is
+-  // enabled for TLS 1.3, but not when it's run over QUIC or DTLS.
+-  const bool enable_compatibility_mode = hs->max_version >= TLS1_3_VERSION &&
+-                                         !SSL_is_quic(ssl) && !SSL_is_dtls(ssl);
++  // enabled for TLS 1.3, but not when it's run over QUIC or DTLS, where a
++  // configured session ID length does not apply either.
++  const bool stream = !SSL_is_quic(ssl) && !SSL_is_dtls(ssl);
++  const bool enable_compatibility_mode =
++      hs->max_version >= TLS1_3_VERSION && stream;
++  const int session_id_length = stream ? hs->config->session_id_length : -1;
+   if (session_type == SSLSessionType::kID) {
+     hs->session_id = ssl->session->session_id;
+   } else if (session_type == SSLSessionType::kTicket ||
+-             enable_compatibility_mode) {
++             (session_id_length < 0 && enable_compatibility_mode)) {
+     // TLS 1.2 session tickets require a placeholder value to signal resumption.
+     hs->session_id.ResizeForOverwrite(SSL_MAX_SSL_SESSION_ID_LENGTH);
+     if (!RAND_bytes(hs->session_id.data(), hs->session_id.size())) {
+       return ssl_hs_error;
+     }
++  } else if (session_id_length > 0) {
++    hs->session_id.ResizeForOverwrite(session_id_length);
++    if (!RAND_bytes(hs->session_id.data(), hs->session_id.size())) {
++      return ssl_hs_error;
++    }
+   }
+ 
+   ssl_early_data_reason_t reason = should_offer_early_data(hs);
+@@ -494,7 +519,9 @@ static enum ssl_hs_wait_t do_early_reverify_server_certificate(
+     }
+   }
+ 
+-  if (!ssl->method->add_change_cipher_spec(ssl)) {
++  // Without a session ID, compatibility mode is off and sends no
++  // ChangeCipherSpec.
++  if (!hs->session_id.empty() && !ssl->method->add_change_cipher_spec(ssl)) {
+     return ssl_hs_error;
+   }
+ 
+@@ -1051,7 +1078,24 @@ static enum ssl_hs_wait_t do_read_server_key_exchange(SSL_HANDSHAKE *hs) {
      hs->peer_psk_identity_hint.reset(raw);
    }
  
@@ -891,7 +942,7 @@ index 7ab6d2c..1df8e30 100644
      // Parse the server parameters.
      uint8_t group_type;
      uint16_t group_id;
-@@ -1381,6 +1415,62 @@ static enum ssl_hs_wait_t do_send_client_certificate(SSL_HANDSHAKE *hs) {
+@@ -1381,6 +1425,62 @@ static enum ssl_hs_wait_t do_send_client_certificate(SSL_HANDSHAKE *hs) {
  static_assert(sizeof(size_t) >= sizeof(unsigned),
                "size_t is smaller than unsigned");
  
@@ -954,7 +1005,7 @@ index 7ab6d2c..1df8e30 100644
  static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
    SSL *const ssl = hs->ssl;
    ScopedCBB cbb;
-@@ -1484,6 +1574,10 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
+@@ -1484,6 +1584,10 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
          !CBB_flush(&body)) {
        return ssl_hs_error;
      }
@@ -966,7 +1017,7 @@ index 7ab6d2c..1df8e30 100644
      CBB child;
      if (!CBB_add_u8_length_prefixed(&body, &child)) {
 diff --git a/ssl/internal.h b/ssl/internal.h
-index 2bea8f6..f79c83f 100644
+index 2bea8f6..7a3914e 100644
 --- a/ssl/internal.h
 +++ b/ssl/internal.h
 @@ -219,6 +219,7 @@ BSSL_NAMESPACE_BEGIN
@@ -1034,7 +1085,7 @@ index 2bea8f6..f79c83f 100644
    // peer_key is the peer's ECDH key for a TLS 1.2 client.
    Array<uint8_t> peer_key;
  
-@@ -3531,6 +3550,20 @@ struct SSL_CONFIG {
+@@ -3531,6 +3550,22 @@ struct SSL_CONFIG {
    // permute_extensions is whether to permute extensions when sending messages.
    bool permute_extensions : 1;
  
@@ -1043,19 +1094,21 @@ index 2bea8f6..f79c83f 100644
 +  Array<uint16_t> tls13_cipher_order;
 +
 +  // strict_extension_order, padding_length, renegotiation_scsv,
-+  // record_size_limit, delegated_credentials and grease_signature_algorithms
-+  // are the client settings of the |SSL_CTX| functions of the same names.
++  // record_size_limit, delegated_credentials, grease_signature_algorithms and
++  // session_id_length are the client settings of the |SSL_CTX| functions of
++  // the same names.
 +  bool strict_extension_order = false;
 +  bool grease_signature_algorithms = false;
 +  uint16_t padding_length = 0;
 +  bool renegotiation_scsv = false;
 +  uint16_t record_size_limit = 0;
 +  Array<uint16_t> delegated_credentials;
++  int session_id_length = -1;
 +
    // aes_hw_override if set indicates we should override checking for aes
    // hardware support, and use the value in aes_hw_override_value instead.
    bool aes_hw_override : 1;
-@@ -4172,6 +4205,20 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
+@@ -4172,6 +4207,22 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
    // permute_extensions is whether to permute extensions when sending messages.
    bool permute_extensions : 1;
  
@@ -1064,14 +1117,16 @@ index 2bea8f6..f79c83f 100644
 +  bssl::Array<uint16_t> tls13_cipher_order;
 +
 +  // strict_extension_order, padding_length, renegotiation_scsv,
-+  // record_size_limit, delegated_credentials and grease_signature_algorithms
-+  // are the client settings of the functions of the same names.
++  // record_size_limit, delegated_credentials, grease_signature_algorithms and
++  // session_id_length are the client settings of the functions of the same
++  // names.
 +  bool strict_extension_order = false;
 +  bool grease_signature_algorithms = false;
 +  uint16_t padding_length = 0;
 +  bool renegotiation_scsv = false;
 +  uint16_t record_size_limit = 0;
 +  bssl::Array<uint16_t> delegated_credentials;
++  int session_id_length = -1;
 +
    // allow_unknown_alpn_protos is whether the client allows unsolicited ALPN
    // protocols from the peer.
@@ -1894,10 +1949,10 @@ index d155b55..3d92363 100644
        return true;
      }
 diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
-index 89702ea..6157779 100644
+index 89702ea..8642aa1 100644
 --- a/ssl/ssl_lib.cc
 +++ b/ssl/ssl_lib.cc
-@@ -517,6 +517,11 @@ SSL *SSL_new(SSL_CTX *ctx) {
+@@ -517,6 +517,12 @@ SSL *SSL_new(SSL_CTX *ctx) {
    ssl->config->retain_only_sha256_of_client_certs =
        ctx->retain_only_sha256_of_client_certs;
    ssl->config->permute_extensions = ctx->permute_extensions;
@@ -1906,10 +1961,11 @@ index 89702ea..6157779 100644
 +  ssl->config->padding_length = ctx->padding_length;
 +  ssl->config->renegotiation_scsv = ctx->renegotiation_scsv;
 +  ssl->config->record_size_limit = ctx->record_size_limit;
++  ssl->config->session_id_length = ctx->session_id_length;
    ssl->config->aes_hw_override = ctx->aes_hw_override;
    ssl->config->aes_hw_override_value = ctx->aes_hw_override_value;
    ssl->config->compliance_policy = ctx->compliance_policy;
-@@ -527,6 +532,10 @@ SSL *SSL_new(SSL_CTX *ctx) {
+@@ -527,6 +533,10 @@ SSL *SSL_new(SSL_CTX *ctx) {
        !ssl->config->alpn_client_proto_list.CopyFrom(
            ctx->alpn_client_proto_list) ||
        !ssl->config->verify_sigalgs.CopyFrom(ctx->verify_sigalgs) ||
@@ -1920,7 +1976,7 @@ index 89702ea..6157779 100644
        !ssl->config->accepted_peer_cert_types.TryCopyFrom(
            ctx->accepted_peer_cert_types) ||
        !ssl->config->available_client_cert_types.TryCopyFrom(
-@@ -3156,6 +3165,36 @@ void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled) {
+@@ -3156,6 +3166,45 @@ void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled) {
    ctx->permute_extensions = !!enabled;
  }
  
@@ -1952,6 +2008,15 @@ index 89702ea..6157779 100644
 +
 +void SSL_CTX_set_record_size_limit(SSL_CTX *ctx, uint16_t limit) {
 +  ctx->record_size_limit = limit;
++}
++
++int SSL_CTX_set_session_id_length(SSL_CTX *ctx, int len) {
++  if (len > SSL_MAX_SSL_SESSION_ID_LENGTH) {
++    OPENSSL_PUT_ERROR(SSL, ERR_R_OVERFLOW);
++    return 0;
++  }
++  ctx->session_id_length = len;
++  return 1;
 +}
 +
  void SSL_set_permute_extensions(SSL *ssl, int enabled) {
@@ -2194,4 +2259,20 @@ index fc7a11f..b246a7b 100644
 +                                      hs->peer_pubkey.get())) {
      ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
      return false;
+   }
+diff --git a/ssl/tls13_client.cc b/ssl/tls13_client.cc
+index c92bb27..89149d2 100644
+--- a/ssl/tls13_client.cc
++++ b/ssl/tls13_client.cc
+@@ -191,8 +191,9 @@ static enum ssl_hs_wait_t do_read_hello_retry_request(SSL_HANDSHAKE *hs) {
+ 
+   // Queue up a ChangeCipherSpec for whenever we next send something. This
+   // will be before the second ClientHello. If we offered early data, this was
+-  // already done.
+-  if (!hs->early_data_offered &&  //
++  // already done. Without a session ID, compatibility mode is off and sends
++  // none.
++  if (!hs->early_data_offered && !hs->session_id.empty() &&  //
+       !ssl->method->add_change_cipher_spec(ssl)) {
+     return ssl_hs_error;
    }

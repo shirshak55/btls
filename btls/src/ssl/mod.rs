@@ -2033,6 +2033,21 @@ impl SslContextBuilder {
         unsafe { ffi::SSL_CTX_set_record_size_limit(self.as_ptr(), limit) }
     }
 
+    /// Sets the length of the random legacy session ID clients send when they resume no
+    /// session by ID or TLS 1.2 ticket, at most 32 bytes: a TLS 1.3 client sending none
+    /// also sends no compatibility mode ChangeCipherSpec. `None` keeps BoringSSL's: 32 bytes
+    /// when offering TLS 1.3, else none.
+    #[corresponds(SSL_CTX_set_session_id_length)]
+    pub fn set_session_id_length(&mut self, len: Option<u8>) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_CTX_set_session_id_length(
+                self.as_ptr(),
+                len.map_or(-1, c_int::from),
+            ))
+            .map(|_| ())
+        }
+    }
+
     /// Sets the colon-separated signature algorithms with which clients accept delegated
     /// credentials (RFC 9345), which they then offer and verify. An empty list offers none.
     #[corresponds(SSL_CTX_set_delegated_credentials)]
