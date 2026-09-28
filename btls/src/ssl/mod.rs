@@ -2048,6 +2048,30 @@ impl SslContextBuilder {
         }
     }
 
+    /// Sets the length of the random payload in the GREASE ECH extension clients send when
+    /// [`SslRef::set_enable_ech_grease`] is on, at least 1 byte; the ClientHello's extensions
+    /// must still fit in 65535 bytes. `None` keeps BoringSSL's: a random multiple of 32 bytes
+    /// from 128 to 224 plus the 16-byte AEAD tag.
+    #[corresponds(SSL_CTX_set_ech_grease_payload_length)]
+    pub fn set_ech_grease_payload_length(&mut self, len: Option<u16>) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_CTX_set_ech_grease_payload_length(
+                self.as_ptr(),
+                len.map_or(-1, c_int::from),
+            ))
+            .map(|_| ())
+        }
+    }
+
+    /// Sets the HPKE `(kdf_id, aead_id)` cipher suite the GREASE ECH extension clients send
+    /// names, as given. `None` keeps BoringSSL's: HKDF-SHA256 with AES-128-GCM if AES hardware
+    /// is available and ChaCha20-Poly1305 otherwise, as does `Some((0, 0))`.
+    #[corresponds(SSL_CTX_set_ech_grease_cipher_suite)]
+    pub fn set_ech_grease_cipher_suite(&mut self, suite: Option<(u16, u16)>) {
+        let (kdf_id, aead_id) = suite.unwrap_or_default();
+        unsafe { ffi::SSL_CTX_set_ech_grease_cipher_suite(self.as_ptr(), kdf_id, aead_id) }
+    }
+
     /// Sets the colon-separated signature algorithms with which clients accept delegated
     /// credentials (RFC 9345), which they then offer and verify. An empty list offers none.
     #[corresponds(SSL_CTX_set_delegated_credentials)]
