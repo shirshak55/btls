@@ -2288,6 +2288,40 @@ impl SslContextBuilder {
         unsafe { cvt(ffi::SSL_CTX_set_num_tickets(self.as_ptr(), num_tickets)).map(|_| ()) }
     }
 
+    /// Sets the lifetime, in seconds, a server puts in a TLS 1.2 (or earlier) session
+    /// ticket / cache entry (the NewSessionTicket `ticket_lifetime`), matching an origin's.
+    #[corresponds(SSL_CTX_set_timeout)]
+    pub fn set_session_timeout(&mut self, seconds: u32) {
+        unsafe {
+            ffi::SSL_CTX_set_timeout(self.as_ptr(), seconds);
+        }
+    }
+
+    /// Sets the lifetime, in seconds, a server puts in a TLS 1.3 NewSessionTicket
+    /// (`ticket_lifetime`), matching an origin's.
+    #[corresponds(SSL_CTX_set_session_psk_dhe_timeout)]
+    pub fn set_session_psk_dhe_timeout(&mut self, seconds: u32) {
+        unsafe {
+            ffi::SSL_CTX_set_session_psk_dhe_timeout(self.as_ptr(), seconds);
+        }
+    }
+
+    /// Sets the 48-byte ticket key material a server uses to seal and open session tickets.
+    /// A stable, shared key lets a ticket issued on one connection resume on another (the
+    /// client-facing resumption WireMason keeps across connections); scope it to one
+    /// mirrored identity with [`Self::set_session_id_context`]. The slice must be 48 bytes.
+    #[corresponds(SSL_CTX_set_tlsext_ticket_keys)]
+    pub fn set_ticket_keys(&mut self, keys: &[u8]) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_CTX_set_tlsext_ticket_keys(
+                self.as_ptr(),
+                keys.as_ptr().cast(),
+                keys.len(),
+            ))
+            .map(|_| ())
+        }
+    }
+
     /// Sets the DER-encoded OCSP response a server staples to clients that request it, so a
     /// downstream server can staple an OCSP response (generated for its own leaf) whenever
     /// the origin stapled one. Enable stapling requests separately if acting as a client.
