@@ -4,7 +4,8 @@ use super::{
     AlpnError, CertificateCompressor, ClientHello, GetSessionPendingError, PrivateKeyMethod,
     PrivateKeyMethodError, SelectCertError, SniError, Ssl, SslAlert, SslContext, SslContextRef,
     SslInfoCallbackAlert, SslInfoCallbackMode, SslInfoCallbackValue, SslRef, SslSession,
-    SslSessionRef, SslSignatureAlgorithm, SslVerifyError, SESSION_CTX_INDEX,
+    SslSessionRef, SslSignatureAlgorithm, SslVerifyError, TicketAeadMethod, TicketOpen,
+    SESSION_CTX_INDEX,
 };
 use crate::error::ErrorStack;
 use crate::ffi;
@@ -524,6 +525,84 @@ where
         .expect("BUG: get session callback missing");
 
     callback(ssl, &line);
+}
+
+pub(super) unsafe extern "C" fn raw_ticket_max_overhead<M>(ssl: *mut ffi::SSL) -> usize
+where
+    M: TicketAeadMethod,
+{
+    // SAFETY: btls provides valid inputs.
+    let ssl = unsafe { SslRef::from_ptr(ssl) };
+    let method = ssl
+        .ssl_context()
+        .ex_data(SslContext::cached_ex_index::<M>())
+        .expect("BUG: ticket AEAD method missing");
+    method.max_overhead(ssl)
+}
+
+pub(super) unsafe extern "C" fn raw_ticket_seal<M>(
+    ssl: *mut ffi::SSL,
+    out: *mut u8,
+    out_len: *mut usize,
+    max_out_len: usize,
+    in_: *const u8,
+    in_len: usize,
+) -> c_int
+where
+    M: TicketAeadMethod,
+{
+    // SAFETY: btls provides valid inputs.
+    let ssl = unsafe { SslRef::from_ptr(ssl) };
+    let session = unsafe { slice::from_raw_parts(in_, in_len) };
+    let method = ssl
+        .ssl_context()
+        .ex_data(SslContext::cached_ex_index::<M>())
+        .expect("BUG: ticket AEAD method missing");
+    match method.seal(ssl, session) {
+        Some(ticket) if ticket.len() <= max_out_len => {
+            // SAFETY: `out` holds `max_out_len` bytes, and the input never aliases it.
+            unsafe {
+                ptr::copy_nonoverlapping(ticket.as_ptr(), out, ticket.len());
+                *out_len = ticket.len();
+            }
+            1
+        }
+        _ => 0,
+    }
+}
+
+pub(super) unsafe extern "C" fn raw_ticket_open<M>(
+    ssl: *mut ffi::SSL,
+    out: *mut u8,
+    out_len: *mut usize,
+    max_out_len: usize,
+    in_: *const u8,
+    in_len: usize,
+) -> ffi::ssl_ticket_aead_result_t
+where
+    M: TicketAeadMethod,
+{
+    // SAFETY: btls provides valid inputs.
+    let ssl = unsafe { SslRef::from_ptr(ssl) };
+    let ticket = unsafe { slice::from_raw_parts(in_, in_len) };
+    let method = ssl
+        .ssl_context()
+        .ex_data(SslContext::cached_ex_index::<M>())
+        .expect("BUG: ticket AEAD method missing");
+    match method.open(ssl, ticket) {
+        TicketOpen::Session(session) if session.len() <= max_out_len => {
+            // SAFETY: `out` holds `max_out_len` bytes, and the input never aliases it.
+            unsafe {
+                ptr::copy_nonoverlapping(session.as_ptr(), out, session.len());
+                *out_len = session.len();
+            }
+            ffi::ssl_ticket_aead_result_t::ssl_ticket_aead_success
+        }
+        TicketOpen::Session(_) | TicketOpen::Error => {
+            ffi::ssl_ticket_aead_result_t::ssl_ticket_aead_error
+        }
+        TicketOpen::Ignore => ffi::ssl_ticket_aead_result_t::ssl_ticket_aead_ignore_ticket,
+    }
 }
 
 pub(super) unsafe extern "C" fn raw_sign<M>(

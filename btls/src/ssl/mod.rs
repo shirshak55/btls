@@ -2337,6 +2337,63 @@ impl SslContextBuilder {
         }
     }
 
+    /// Sets the length, in bytes (1 to 255, default 1), of the ticket_nonce a server writes
+    /// in each TLS 1.3 NewSessionTicket: the ticket's index as a big-endian integer of that
+    /// length, so a server can reproduce another implementation's nonce shape (OpenSSL's
+    /// eight bytes, say).
+    #[corresponds(SSL_CTX_set_ticket_nonce_length)]
+    pub fn set_ticket_nonce_length(&mut self, len: usize) -> Result<(), ErrorStack> {
+        unsafe { cvt(ffi::SSL_CTX_set_ticket_nonce_length(self.as_ptr(), len)).map(|_| ()) }
+    }
+
+    /// Sets whether a server adds a GREASE extension (RFC 8701) to each TLS 1.3
+    /// NewSessionTicket, as BoringSSL does by default and other implementations don't.
+    #[corresponds(SSL_CTX_set_ticket_grease_extension)]
+    pub fn set_ticket_grease_extension(&mut self, enabled: bool) {
+        unsafe { ffi::SSL_CTX_set_ticket_grease_extension(self.as_ptr(), enabled as _) }
+    }
+
+    /// Sets the signature algorithms a server signs its handshake (CertificateVerify,
+    /// ServerKeyExchange) with, in preference order, so it can pick the one an origin
+    /// picked for the same key type when the client offers it.
+    #[corresponds(SSL_CTX_set_signing_algorithm_prefs)]
+    pub fn set_signing_algorithm_prefs(
+        &mut self,
+        prefs: &[SslSignatureAlgorithm],
+    ) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_CTX_set_signing_algorithm_prefs(
+                self.as_ptr(),
+                prefs.as_ptr().cast(),
+                prefs.len(),
+            ))
+            .map(|_| ())
+        }
+    }
+
+    /// Seals and opens a server's session tickets with `method` instead of the context's
+    /// ticket keys, so the tickets' shape (their length, say) is the method's.
+    ///
+    /// See [`TicketAeadMethod`] for more details.
+    #[corresponds(SSL_CTX_set_ticket_aead_method)]
+    pub fn set_ticket_aead_method<M>(&mut self, method: M)
+    where
+        M: TicketAeadMethod,
+    {
+        unsafe {
+            self.replace_ex_data(SslContext::cached_ex_index::<M>(), method);
+
+            ffi::SSL_CTX_set_ticket_aead_method(
+                self.as_ptr(),
+                &ffi::SSL_TICKET_AEAD_METHOD {
+                    max_overhead: Some(callbacks::raw_ticket_max_overhead::<M>),
+                    seal: Some(callbacks::raw_ticket_seal::<M>),
+                    open: Some(callbacks::raw_ticket_open::<M>),
+                },
+            );
+        }
+    }
+
     /// Sets the context's compliance policy.
     ///
     /// This feature isn't available in the certified version of BoringSSL.
@@ -4145,6 +4202,56 @@ impl SslRef {
         }
     }
 
+    /// Enables ALPS for the ALPN protocol `alps` with `settings` as this side's
+    /// application settings: a server's, sent in its EncryptedExtensions to a client that
+    /// offered ALPS for the negotiated protocol; a client's, sent in its own.
+    #[corresponds(SSL_add_application_settings)]
+    pub fn add_application_settings_with(
+        &mut self,
+        alps: &[u8],
+        settings: &[u8],
+    ) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_add_application_settings(
+                self.as_ptr(),
+                alps.as_ptr(),
+                alps.len(),
+                settings.as_ptr(),
+                settings.len(),
+            ))
+            .map(|_| ())
+        }
+    }
+
+    /// The application settings the peer sent (ALPS), `None` when ALPS wasn't negotiated.
+    #[corresponds(SSL_get0_peer_application_settings)]
+    pub fn peer_application_settings(&self) -> Option<&[u8]> {
+        unsafe {
+            if ffi::SSL_has_application_settings(self.as_ptr()) == 0 {
+                return None;
+            }
+            let mut data = ptr::null();
+            let mut len = 0;
+            ffi::SSL_get0_peer_application_settings(self.as_ptr(), &mut data, &mut len);
+            Some(slice::from_raw_parts(data, len))
+        }
+    }
+
+    /// Replaces, on a client mid-handshake that negotiated ALPS but hasn't sent its
+    /// EncryptedExtensions yet (as during a custom verification callback returning
+    /// [`SslVerifyError::Retry`]), the application settings it sends.
+    #[corresponds(SSL_set_pending_application_settings)]
+    pub fn set_pending_application_settings(&mut self, settings: &[u8]) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_set_pending_application_settings(
+                self.as_ptr(),
+                settings.as_ptr(),
+                settings.len(),
+            ))
+            .map(|_| ())
+        }
+    }
+
     /// Sets the ALPS use new codepoint flag.
     #[corresponds(SSL_set_alps_use_new_codepoint)]
     pub fn set_alps_use_new_codepoint(&mut self, enable: bool) {
@@ -4788,6 +4895,33 @@ impl PrivateKeyMethodError {
 
     /// The operation could not be completed and should be retried later.
     pub const RETRY: Self = Self(ffi::ssl_private_key_result_t::ssl_private_key_retry);
+}
+
+/// Seals a server's session tickets and opens them again (see
+/// [`SslContextBuilder::set_ticket_aead_method`]).
+pub trait TicketAeadMethod: Send + Sync + 'static {
+    /// The most bytes [`Self::seal`] adds to a serialized session.
+    fn max_overhead(&self, ssl: &SslRef) -> usize;
+
+    /// Seals the serialized session `session` into the ticket it returns, at most
+    /// `session.len()` plus [`Self::max_overhead`] bytes long; an empty ticket sends no
+    /// NewSessionTicket, `None` fails the handshake.
+    fn seal(&self, ssl: &SslRef, session: &[u8]) -> Option<Vec<u8>>;
+
+    /// Opens `ticket` back into the serialized session it seals, at most `ticket.len()`
+    /// bytes long.
+    fn open(&self, ssl: &SslRef, ticket: &[u8]) -> TicketOpen;
+}
+
+/// What [`TicketAeadMethod::open`] made of a ticket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TicketOpen {
+    /// The serialized session it sealed.
+    Session(Vec<u8>),
+    /// A ticket this method didn't seal (or can't open any more): a full handshake.
+    Ignore,
+    /// A fatal error: the handshake fails.
+    Error,
 }
 
 /// Describes certificate compression algorithm. Implementation MUST implement transformation at least in one direction.
