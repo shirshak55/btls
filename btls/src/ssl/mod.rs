@@ -4233,6 +4233,9 @@ impl SslRef {
             let mut data = ptr::null();
             let mut len = 0;
             ffi::SSL_get0_peer_application_settings(self.as_ptr(), &mut data, &mut len);
+            if data.is_null() {
+                return Some(&[]);
+            }
             Some(slice::from_raw_parts(data, len))
         }
     }
