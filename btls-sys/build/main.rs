@@ -230,6 +230,11 @@ fn get_boringssl_cmake_config(config: &Config) -> cmake::Config {
     }
 
     if config.host == config.target {
+        // The selected Xcode's SDK, as rustc links against, rather than the compiler's
+        // default, which may be a newer Command Line Tools SDK its linker can't read.
+        if config.target_os == "macos" {
+            boringssl_cmake.define("CMAKE_OSX_SYSROOT", get_apple_sdk_name(config));
+        }
         return boringssl_cmake;
     }
 
