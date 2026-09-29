@@ -479,6 +479,9 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
     println!("cargo:warning=applying WireMason ClientHello controls to BoringSSL");
     apply_patch(config, "wiremason-clienthello.patch")?;
 
+    println!("cargo:warning=applying WireMason server flight controls to BoringSSL");
+    apply_patch(config, "wiremason-serverhello.patch")?;
+
     Ok(())
 }
 

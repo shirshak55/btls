@@ -2256,6 +2256,30 @@ impl SslContextBuilder {
         }
     }
 
+    /// Sets the order a server writes its ServerHello and EncryptedExtensions extensions in,
+    /// by extension id: each listed, implemented extension the negotiation calls for is
+    /// written in this order, any other after them in BoringSSL's default order (none of the
+    /// EncryptedExtensions ones with [`Self::set_strict_server_extension_order`]). Lets a
+    /// downstream server reproduce an origin's ServerHello/EncryptedExtensions (JA3S/JA4S).
+    #[corresponds(SSL_CTX_set_server_extension_order)]
+    pub fn set_server_extension_order(&mut self, ids: &[u16]) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_CTX_set_server_extension_order(
+                self.as_ptr(),
+                ids.as_ptr(),
+                ids.len(),
+            ))
+            .map(|_| ())
+        }
+    }
+
+    /// Makes the order set with [`Self::set_server_extension_order`] the whole list of
+    /// optional server extensions: an unlisted one the negotiation would add is left out.
+    #[corresponds(SSL_CTX_set_strict_server_extension_order)]
+    pub fn set_strict_server_extension_order(&mut self, strict: bool) {
+        unsafe { ffi::SSL_CTX_set_strict_server_extension_order(self.as_ptr(), strict as _) }
+    }
+
     /// Sets how many NewSessionTicket messages a server sends immediately after a
     /// successful handshake (default two), so a downstream server can match the ticket
     /// count an origin issued.

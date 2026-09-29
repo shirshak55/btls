@@ -1,0 +1,278 @@
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index 8101d16..441bfe4 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -5560,6 +5560,26 @@ OPENSSL_EXPORT int SSL_CTX_set_tls13_cipher_order(SSL_CTX *ctx,
+ OPENSSL_EXPORT void SSL_CTX_set_strict_extension_order(SSL_CTX *ctx,
+                                                       int enabled);
+ 
++// SSL_CTX_set_server_extension_order sets the order in which a server on |ctx|
++// writes the extensions of its ServerHello and EncryptedExtensions: the
++// implemented extensions whose id appears in |ids| are written in that order,
++// each only when the negotiation calls for it; any implemented extension not
++// listed follows in the library's default order unless a strict order is set
++// (see |SSL_CTX_set_strict_server_extension_order|). It is the server-side
++// analogue of |SSL_CTX_set_extension_order|.
++OPENSSL_EXPORT int SSL_CTX_set_server_extension_order(SSL_CTX *ctx,
++                                                      const uint16_t *ids,
++                                                      size_t num_ids);
++
++// SSL_CTX_set_strict_server_extension_order configures whether the order set
++// with |SSL_CTX_set_server_extension_order| is the whole list: only the listed
++// extensions are written (still only those the negotiation calls for), and no
++// others; an unlisted extended_master_secret, session_ticket, status_request or
++// ALPN extension is then not negotiated either. The TLS 1.3 ServerHello's own
++// extensions (pre_shared_key, key_share, supported_versions) are always sent.
++OPENSSL_EXPORT void SSL_CTX_set_strict_server_extension_order(SSL_CTX *ctx,
++                                                             int enabled);
++
+ // SSL_CTX_set_grease_signature_algorithms configures whether clients on |ctx|
+ // start their signature_algorithms extension with a GREASE value (RFC 8701).
+ OPENSSL_EXPORT void SSL_CTX_set_grease_signature_algorithms(SSL_CTX *ctx,
+diff --git a/ssl/extensions.cc b/ssl/extensions.cc
+index c7c49b3..cc8fde3 100644
+--- a/ssl/extensions.cc
++++ b/ssl/extensions.cc
+@@ -4825,6 +4825,68 @@ bool ssl_add_serverhello_tlsext(SSL_HANDSHAKE *hs, CBB *out) {
+     goto err;
+   }
+ 
++  // A server extension order pins the wire order of the ServerHello and
++  // EncryptedExtensions extensions (see |SSL_CTX_set_server_extension_order|):
++  // the listed, implemented, received extensions are written in that order,
++  // then, unless a strict order is set, any remaining received extensions in the
++  // library's default order.
++  if (hs->config != nullptr && !hs->config->server_extension_order.empty()) {
++    bool emitted[kNumExtensions] = {false};
++    for (uint16_t id : hs->config->server_extension_order) {
++      for (unsigned i = 0; i < kNumExtensions; i++) {
++        if (kExtensions[i].value != id || emitted[i] ||
++            !(hs->extensions.received & (1u << i))) {
++          continue;
++        }
++        emitted[i] = true;
++        if (!kExtensions[i].add_serverhello(hs, &extensions)) {
++          OPENSSL_PUT_ERROR(SSL, SSL_R_ERROR_ADDING_EXTENSION);
++          ERR_add_error_dataf("extension %u", (unsigned)kExtensions[i].value);
++          goto err;
++        }
++        break;
++      }
++    }
++    for (unsigned i = 0; i < kNumExtensions; i++) {
++      if (emitted[i] || !(hs->extensions.received & (1u << i))) {
++        continue;
++      }
++      if (hs->config->strict_server_extension_order) {
++        // A strict order leaves the extension out, so the negotiation must not
++        // rely on it either.
++        switch (kExtensions[i].value) {
++          case TLSEXT_TYPE_extended_master_secret:
++            hs->extended_master_secret = false;
++            break;
++          case TLSEXT_TYPE_session_ticket:
++            hs->ticket_expected = false;
++            break;
++          case TLSEXT_TYPE_status_request:
++            hs->certificate_status_expected = false;
++            break;
++          case TLSEXT_TYPE_application_layer_protocol_negotiation:
++            ssl->s3->alpn_selected.Reset();
++            break;
++        }
++        continue;
++      }
++      {
++        if (!kExtensions[i].add_serverhello(hs, &extensions)) {
++          OPENSSL_PUT_ERROR(SSL, SSL_R_ERROR_ADDING_EXTENSION);
++          ERR_add_error_dataf("extension %u", (unsigned)kExtensions[i].value);
++          goto err;
++        }
++      }
++    }
++
++    // Discard empty extensions blocks before TLS 1.3.
++    if (ssl_protocol_version(ssl) < TLS1_3_VERSION &&  //
++        CBB_len(&extensions) == 0) {
++      CBB_discard_child(out);
++    }
++    return CBB_flush(out);
++  }
++
+   for (unsigned i = 0; i < kNumExtensions; i++) {
+     if (!(hs->extensions.received & (1u << i))) {
+       // Don't send extensions that were not received.
+diff --git a/ssl/internal.h b/ssl/internal.h
+index d1e59e8..3bdce8c 100644
+--- a/ssl/internal.h
++++ b/ssl/internal.h
+@@ -3554,6 +3554,14 @@ struct SSL_CONFIG {
+   Array<uint16_t> extension_order;
+   Array<uint16_t> tls13_cipher_order;
+ 
++  // server_extension_order and strict_server_extension_order are the server
++  // settings of the |SSL_CTX| functions of the same names: the order the
++  // ServerHello and EncryptedExtensions extensions are written in, and whether
++  // that order is the whole list (only listed extensions, still only those the
++  // negotiation calls for).
++  Array<uint16_t> server_extension_order;
++  bool strict_server_extension_order = false;
++
+   // strict_extension_order, padding_length, renegotiation_scsv,
+   // record_size_limit, delegated_credentials, grease_signature_algorithms,
+   // session_id_length and ech_grease_payload_length are the client settings of
+@@ -4215,6 +4223,12 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
+   bssl::Array<uint16_t> extension_order;
+   bssl::Array<uint16_t> tls13_cipher_order;
+ 
++  // server_extension_order and strict_server_extension_order are the server
++  // settings of |SSL_CTX_set_server_extension_order| and
++  // |SSL_CTX_set_strict_server_extension_order|.
++  bssl::Array<uint16_t> server_extension_order;
++  bool strict_server_extension_order = false;
++
+   // strict_extension_order, padding_length, renegotiation_scsv,
+   // record_size_limit, delegated_credentials, grease_signature_algorithms,
+   // session_id_length and ech_grease_payload_length are the client settings of
+diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
+index 50e497a..6e17bb4 100644
+--- a/ssl/ssl_lib.cc
++++ b/ssl/ssl_lib.cc
+@@ -518,6 +518,8 @@ SSL *SSL_new(SSL_CTX *ctx) {
+       ctx->retain_only_sha256_of_client_certs;
+   ssl->config->permute_extensions = ctx->permute_extensions;
+   ssl->config->strict_extension_order = ctx->strict_extension_order;
++  ssl->config->strict_server_extension_order =
++      ctx->strict_server_extension_order;
+   ssl->config->grease_signature_algorithms = ctx->grease_signature_algorithms;
+   ssl->config->padding_length = ctx->padding_length;
+   ssl->config->renegotiation_scsv = ctx->renegotiation_scsv;
+@@ -538,6 +540,8 @@ SSL *SSL_new(SSL_CTX *ctx) {
+       !ssl->config->verify_sigalgs.CopyFrom(ctx->verify_sigalgs) ||
+       !ssl->config->extension_order.CopyFrom(ctx->extension_order) ||
+       !ssl->config->tls13_cipher_order.CopyFrom(ctx->tls13_cipher_order) ||
++      !ssl->config->server_extension_order.CopyFrom(
++          ctx->server_extension_order) ||
+       !ssl->config->delegated_credentials.CopyFrom(
+           ctx->delegated_credentials) ||
+       !ssl->config->accepted_peer_cert_types.TryCopyFrom(
+@@ -3183,6 +3187,15 @@ void SSL_CTX_set_strict_extension_order(SSL_CTX *ctx, int enabled) {
+   ctx->strict_extension_order = !!enabled;
+ }
+ 
++int SSL_CTX_set_server_extension_order(SSL_CTX *ctx, const uint16_t *ids,
++                                       size_t num_ids) {
++  return ctx->server_extension_order.CopyFrom(MakeConstSpan(ids, num_ids));
++}
++
++void SSL_CTX_set_strict_server_extension_order(SSL_CTX *ctx, int enabled) {
++  ctx->strict_server_extension_order = !!enabled;
++}
++
+ void SSL_CTX_set_grease_signature_algorithms(SSL_CTX *ctx, int enabled) {
+   ctx->grease_signature_algorithms = !!enabled;
+ }
+diff --git a/ssl/tls13_server.cc b/ssl/tls13_server.cc
+index 4dabd57..b37b104 100644
+--- a/ssl/tls13_server.cc
++++ b/ssl/tls13_server.cc
+@@ -134,6 +134,48 @@ static int ssl_ext_supported_versions_add_serverhello(SSL_HANDSHAKE *hs,
+   return 1;
+ }
+ 
++// add_tls13_server_hello_extensions writes the TLS 1.3 ServerHello's
++// extensions: pre_shared_key, pake, key_share and supported_versions, each when
++// the negotiation calls for it, in the order |SSL_CTX_set_server_extension_order|
++// lists them, any not listed after them in the default order.
++static bool add_tls13_server_hello_extensions(SSL_HANDSHAKE *hs, CBB *out) {
++  using Writer = bool (*)(SSL_HANDSHAKE *, CBB *);
++  struct Entry {
++    uint16_t id;
++    Writer write;
++  };
++  const Entry kDefault[] = {
++      {TLSEXT_TYPE_pre_shared_key, ssl_ext_pre_shared_key_add_serverhello},
++      {TLSEXT_TYPE_pake, ssl_ext_pake_add_serverhello},
++      {TLSEXT_TYPE_key_share, ssl_ext_key_share_add_serverhello},
++      {TLSEXT_TYPE_supported_versions,
++       [](SSL_HANDSHAKE *h, CBB *c) -> bool {
++         return ssl_ext_supported_versions_add_serverhello(h, c);
++       }},
++  };
++  constexpr size_t kNum = sizeof(kDefault) / sizeof(kDefault[0]);
++  bool done[kNum] = {false};
++  for (uint16_t id : hs->config->server_extension_order) {
++    for (size_t i = 0; i < kNum; i++) {
++      if (!done[i] && kDefault[i].id == id) {
++        done[i] = true;
++        if (!kDefault[i].write(hs, out)) {
++          return false;
++        }
++        break;
++      }
++    }
++  }
++  // The ServerHello's extensions are all required by the negotiation, so the
++  // unlisted ones always follow, even with a strict order.
++  for (size_t i = 0; i < kNum; i++) {
++    if (!done[i] && !kDefault[i].write(hs, out)) {
++      return false;
++    }
++  }
++  return true;
++}
++
+ static const SSL_CIPHER *choose_tls13_cipher(
+     const SSL *ssl, const SSL_CLIENT_HELLO *client_hello) {
+   CBS cipher_suites;
+@@ -842,13 +884,31 @@ static enum ssl_hs_wait_t do_send_hello_retry_request(SSL_HANDSHAKE *hs) {
+                      hs->session_id.size()) ||
+       !CBB_add_u16(&body, SSL_CIPHER_get_protocol_id(hs->new_cipher)) ||
+       !CBB_add_u8(&body, 0 /* no compression */) ||
+-      !CBB_add_u16_length_prefixed(&body, &extensions) ||
+-      !CBB_add_u16(&extensions, TLSEXT_TYPE_supported_versions) ||
+-      !CBB_add_u16(&extensions, 2 /* length */) ||
+-      !CBB_add_u16(&extensions, ssl->s3->version) ||
+-      !CBB_add_u16(&extensions, TLSEXT_TYPE_key_share) ||
+-      !CBB_add_u16(&extensions, 2 /* length */) ||
+-      !CBB_add_u16(&extensions, hs->new_session->group_id)) {
++      !CBB_add_u16_length_prefixed(&body, &extensions)) {
++    return ssl_hs_error;
++  }
++  // The HelloRetryRequest's supported_versions and key_share follow a server
++  // extension order that lists key_share first (see
++  // |SSL_CTX_set_server_extension_order|).
++  bool key_share_first = false;
++  for (uint16_t id : hs->config->server_extension_order) {
++    if (id == TLSEXT_TYPE_supported_versions || id == TLSEXT_TYPE_key_share) {
++      key_share_first = id == TLSEXT_TYPE_key_share;
++      break;
++    }
++  }
++  auto add_versions = [&]() -> bool {
++    return CBB_add_u16(&extensions, TLSEXT_TYPE_supported_versions) &&
++           CBB_add_u16(&extensions, 2 /* length */) &&
++           CBB_add_u16(&extensions, ssl->s3->version);
++  };
++  auto add_key_share = [&]() -> bool {
++    return CBB_add_u16(&extensions, TLSEXT_TYPE_key_share) &&
++           CBB_add_u16(&extensions, 2 /* length */) &&
++           CBB_add_u16(&extensions, hs->new_session->group_id);
++  };
++  if (key_share_first ? !(add_key_share() && add_versions())
++                      : !(add_versions() && add_key_share())) {
+     return ssl_hs_error;
+   }
+   if (hs->ech_is_inner) {
+@@ -1027,10 +1087,7 @@ static enum ssl_hs_wait_t do_send_server_hello(SSL_HANDSHAKE *hs) {
+       !CBB_add_u16(&body, SSL_CIPHER_get_protocol_id(hs->new_cipher)) ||
+       !CBB_add_u8(&body, 0) ||
+       !CBB_add_u16_length_prefixed(&body, &extensions) ||
+-      !ssl_ext_pre_shared_key_add_serverhello(hs, &extensions) ||
+-      !ssl_ext_pake_add_serverhello(hs, &extensions) ||
+-      !ssl_ext_key_share_add_serverhello(hs, &extensions) ||
+-      !ssl_ext_supported_versions_add_serverhello(hs, &extensions) ||
++      !add_tls13_server_hello_extensions(hs, &extensions) ||
+       !ssl->method->finish_message(ssl, cbb.get(), &server_hello)) {
+     return ssl_hs_error;
+   }
