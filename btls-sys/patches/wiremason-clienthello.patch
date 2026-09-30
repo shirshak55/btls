@@ -272,6 +272,593 @@ index f0c5764..7c28d77 100644
      default:
        // EVP_tls_cbc_record_digest_supported should have been called first to
        // check that the hash function is supported.
+diff --git a/crypto/err/ssl.errordata b/crypto/err/ssl.errordata
+index 4f1d77a..92c322d 100644
+--- a/crypto/err/ssl.errordata
++++ b/crypto/err/ssl.errordata
+@@ -140,6 +140,7 @@ SSL,280,NO_SUPPORTED_VERSIONS_ENABLED
+ SSL,185,NULL_SSL_CTX
+ SSL,186,NULL_SSL_METHOD_PASSED
+ SSL,289,OCSP_CB_ERROR
++SSL,337,OFFER_ONLY_VALUE_SELECTED
+ SSL,187,OLD_SESSION_CIPHER_NOT_RETURNED
+ SSL,268,OLD_SESSION_PRF_HASH_MISMATCH
+ SSL,188,OLD_SESSION_VERSION_NOT_RETURNED
+diff --git a/gen/crypto/err_data.cc b/gen/crypto/err_data.cc
+index e20e7e7..0a56046 100644
+--- a/gen/crypto/err_data.cc
++++ b/gen/crypto/err_data.cc
+@@ -206,51 +206,51 @@ const uint32_t kOpenSSLReasonValues[] = {
+     0x283500f7,
+     0x28358cc1,
+     0x2836099a,
+-    0x2c3234ce,
++    0x2c3234e8,
+     0x2c329443,
+-    0x2c3334dc,
+-    0x2c33b4ee,
+-    0x2c343502,
+-    0x2c34b514,
+-    0x2c35352f,
+-    0x2c35b541,
+-    0x2c363571,
++    0x2c3334f6,
++    0x2c33b508,
++    0x2c34351c,
++    0x2c34b52e,
++    0x2c353549,
++    0x2c35b55b,
++    0x2c36358b,
+     0x2c36833a,
+-    0x2c37357e,
+-    0x2c37b5aa,
+-    0x2c3835e8,
+-    0x2c38b5ff,
+-    0x2c39361d,
+-    0x2c39b62d,
+-    0x2c3a363f,
+-    0x2c3ab653,
+-    0x2c3b3664,
+-    0x2c3bb683,
++    0x2c373598,
++    0x2c37b5c4,
++    0x2c383602,
++    0x2c38b619,
++    0x2c393637,
++    0x2c39b647,
++    0x2c3a3659,
++    0x2c3ab66d,
++    0x2c3b367e,
++    0x2c3bb69d,
+     0x2c3c1455,
+     0x2c3c946b,
+-    0x2c3d36c8,
++    0x2c3d36e2,
+     0x2c3d9484,
+-    0x2c3e36f2,
+-    0x2c3eb700,
+-    0x2c3f3718,
+-    0x2c3fb730,
+-    0x2c40375a,
++    0x2c3e370c,
++    0x2c3eb71a,
++    0x2c3f3732,
++    0x2c3fb74a,
++    0x2c403774,
+     0x2c409330,
+-    0x2c41376b,
+-    0x2c41b77e,
++    0x2c413785,
++    0x2c41b798,
+     0x2c4212f6,
+-    0x2c42b78f,
++    0x2c42b7a9,
+     0x2c43076d,
+-    0x2c43b675,
+-    0x2c4435bd,
+-    0x2c44b73d,
+-    0x2c453554,
+-    0x2c45b590,
+-    0x2c46360d,
+-    0x2c46b697,
+-    0x2c4736ac,
+-    0x2c47b6e5,
+-    0x2c4835cf,
++    0x2c43b68f,
++    0x2c4435d7,
++    0x2c44b757,
++    0x2c45356e,
++    0x2c45b5aa,
++    0x2c463627,
++    0x2c46b6b1,
++    0x2c4736c6,
++    0x2c47b6ff,
++    0x2c4835e9,
+     0x30320000,
+     0x30328015,
+     0x3033001f,
+@@ -475,72 +475,72 @@ const uint32_t kOpenSSLReasonValues[] = {
+     0x405c265b,
+     0x405ca6b0,
+     0x405d26bd,
+-    0x405da6e2,
+-    0x405e2720,
++    0x405da6fc,
++    0x405e273a,
+     0x405e8afe,
+-    0x405f2750,
+-    0x405fa75d,
+-    0x4060276b,
+-    0x4060a78d,
+-    0x40612801,
+-    0x4061a839,
+-    0x40622850,
+-    0x4062a861,
+-    0x406328ae,
+-    0x4063a8c3,
+-    0x406428da,
+-    0x4064a906,
+-    0x40652921,
+-    0x4065a938,
+-    0x40662950,
+-    0x4066a97a,
+-    0x406729a5,
+-    0x4067a9ea,
+-    0x40682a32,
+-    0x4068aa53,
+-    0x40692a85,
+-    0x4069aab3,
+-    0x406a2ad4,
+-    0x406aaaf4,
+-    0x406b2c7c,
+-    0x406bac9f,
+-    0x406c2cb5,
+-    0x406cafbf,
+-    0x406d2fee,
+-    0x406db016,
+-    0x406e3044,
+-    0x406eb091,
+-    0x406f30ea,
+-    0x406fb122,
+-    0x40703135,
+-    0x4070b152,
++    0x405f276a,
++    0x405fa777,
++    0x40602785,
++    0x4060a7a7,
++    0x4061281b,
++    0x4061a853,
++    0x4062286a,
++    0x4062a87b,
++    0x406328c8,
++    0x4063a8dd,
++    0x406428f4,
++    0x4064a920,
++    0x4065293b,
++    0x4065a952,
++    0x4066296a,
++    0x4066a994,
++    0x406729bf,
++    0x4067aa04,
++    0x40682a4c,
++    0x4068aa6d,
++    0x40692a9f,
++    0x4069aacd,
++    0x406a2aee,
++    0x406aab0e,
++    0x406b2c96,
++    0x406bacb9,
++    0x406c2ccf,
++    0x406cafd9,
++    0x406d3008,
++    0x406db030,
++    0x406e305e,
++    0x406eb0ab,
++    0x406f3104,
++    0x406fb13c,
++    0x4070314f,
++    0x4070b16c,
+     0x4071084d,
+-    0x4071b164,
+-    0x40723177,
+-    0x4072b1ad,
+-    0x407331c5,
++    0x4071b17e,
++    0x40723191,
++    0x4072b1c7,
++    0x407331df,
+     0x4073966d,
+-    0x407431d9,
+-    0x4074b1f3,
+-    0x40753204,
+-    0x4075b218,
+-    0x40763226,
++    0x407431f3,
++    0x4074b20d,
++    0x4075321e,
++    0x4075b232,
++    0x40763240,
+     0x407693f3,
+-    0x40773263,
+-    0x4077b2bf,
+-    0x407832da,
+-    0x4078b313,
+-    0x4079332a,
+-    0x4079b340,
+-    0x407a336c,
+-    0x407ab37f,
+-    0x407b3394,
+-    0x407bb3a6,
+-    0x407c33d7,
+-    0x407cb3e0,
+-    0x407d2a6e,
++    0x4077327d,
++    0x4077b2d9,
++    0x407832f4,
++    0x4078b32d,
++    0x40793344,
++    0x4079b35a,
++    0x407a3386,
++    0x407ab399,
++    0x407b33ae,
++    0x407bb3c0,
++    0x407c33f1,
++    0x407cb3fa,
++    0x407d2a88,
+     0x407da2f7,
+-    0x407e32ef,
++    0x407e3309,
+     0x407ea5ac,
+     0x407f1ed2,
+     0x407fa0b5,
+@@ -548,58 +548,58 @@ const uint32_t kOpenSSLReasonValues[] = {
+     0x40809efa,
+     0x4081241a,
+     0x4081a1bc,
+-    0x4082302f,
++    0x40823049,
+     0x40829c4d,
+     0x40832587,
+-    0x4083a8eb,
++    0x4083a905,
+     0x40841f1e,
+     0x4084a5e4,
+     0x4085266c,
+-    0x4085a7c8,
+-    0x40862702,
++    0x4085a7e2,
++    0x4086271c,
+     0x4086a343,
+-    0x40873075,
+-    0x4087a816,
++    0x4087308f,
++    0x4087a830,
+     0x40881c8b,
+-    0x4088a9fd,
++    0x4088aa17,
+     0x40891cda,
+     0x40899c67,
+-    0x408a2ced,
++    0x408a2d07,
+     0x408a9a85,
+-    0x408b33bb,
+-    0x408bb0ff,
++    0x408b33d5,
++    0x408bb119,
+     0x408c2692,
+     0x408d2006,
+     0x408d9f50,
+     0x408e2136,
+     0x408ea4d7,
+-    0x408f2a11,
+-    0x408fa7e4,
+-    0x409029c6,
++    0x408f2a2b,
++    0x408fa7fe,
++    0x409029e0,
+     0x4090a6d4,
+-    0x40912cd5,
++    0x40912cef,
+     0x40919abd,
+     0x40921d27,
+-    0x4092b0b0,
+-    0x40933190,
++    0x4092b0ca,
++    0x409331aa,
+     0x4093a354,
+     0x40941f32,
+-    0x4094ad06,
+-    0x40952872,
+-    0x4095b34c,
+-    0x4096305c,
++    0x4094ad20,
++    0x4095288c,
++    0x4095b366,
++    0x40963076,
+     0x4096a282,
+     0x409723d4,
+     0x4097a185,
+     0x40981d87,
+-    0x4098a886,
+-    0x409930cc,
++    0x4098a8a0,
++    0x409930e6,
+     0x4099a504,
+     0x409a249d,
+     0x409a9aa1,
+     0x409b1f8c,
+     0x409b9fb7,
+-    0x409c32a1,
++    0x409c32bb,
+     0x409c9fdf,
+     0x409d223e,
+     0x409da1d2,
+@@ -612,52 +612,53 @@ const uint32_t kOpenSSLReasonValues[] = {
+     0x40a121ed,
+     0x40a1a5f8,
+     0x40a22370,
+-    0x40a2a741,
+-    0x40a327b5,
+-    0x40a3b285,
++    0x40a2a75b,
++    0x40a327cf,
++    0x40a3b29f,
+     0x40a423ba,
+     0x40a4a204,
+     0x40a51f0e,
+     0x40a5a311,
+     0x40a6267c,
+     0x40a6a226,
+-    0x40a7324b,
++    0x40a73265,
+     0x40a7a40e,
+     0x40a8232c,
+-    0x41f42ba7,
+-    0x41f92c39,
+-    0x41fe2b2c,
+-    0x41feade2,
+-    0x41ff2f10,
+-    0x42032bc0,
+-    0x42082be2,
+-    0x4208ac1e,
+-    0x42092b10,
+-    0x4209ac58,
+-    0x420a2b67,
+-    0x420aab47,
+-    0x420b2b87,
+-    0x420bac00,
+-    0x420c2f2c,
+-    0x420cad16,
+-    0x420d2dc9,
+-    0x420dae00,
+-    0x42122e33,
+-    0x42172ef3,
+-    0x4217ae75,
+-    0x421c2e97,
+-    0x421f2e52,
+-    0x42212fa4,
+-    0x42262ed6,
+-    0x422b2f82,
+-    0x422bada4,
+-    0x422c2f64,
+-    0x422cad57,
+-    0x422d2d30,
+-    0x422daf43,
+-    0x422e2d83,
+-    0x42302eb2,
+-    0x4230ae1a,
++    0x40a8a6e2,
++    0x41f42bc1,
++    0x41f92c53,
++    0x41fe2b46,
++    0x41feadfc,
++    0x41ff2f2a,
++    0x42032bda,
++    0x42082bfc,
++    0x4208ac38,
++    0x42092b2a,
++    0x4209ac72,
++    0x420a2b81,
++    0x420aab61,
++    0x420b2ba1,
++    0x420bac1a,
++    0x420c2f46,
++    0x420cad30,
++    0x420d2de3,
++    0x420dae1a,
++    0x42122e4d,
++    0x42172f0d,
++    0x4217ae8f,
++    0x421c2eb1,
++    0x421f2e6c,
++    0x42212fbe,
++    0x42262ef0,
++    0x422b2f9c,
++    0x422badbe,
++    0x422c2f7e,
++    0x422cad71,
++    0x422d2d4a,
++    0x422daf5d,
++    0x422e2d9d,
++    0x42302ecc,
++    0x4230ae34,
+     0x44320778,
+     0x44328787,
+     0x44330793,
+@@ -713,71 +714,71 @@ const uint32_t kOpenSSLReasonValues[] = {
+     0x4c41954d,
+     0x4c4216b6,
+     0x4c429495,
+-    0x503237a1,
+-    0x5032b7b0,
+-    0x503337bb,
+-    0x5033b7cb,
+-    0x503437e4,
+-    0x5034b7fe,
+-    0x5035380c,
+-    0x5035b822,
+-    0x50363834,
+-    0x5036b84a,
+-    0x50373863,
+-    0x5037b876,
+-    0x5038388e,
+-    0x5038b89f,
+-    0x503938b4,
+-    0x5039b8c8,
+-    0x503a38e8,
+-    0x503ab8fe,
+-    0x503b3916,
+-    0x503bb928,
+-    0x503c3944,
+-    0x503cb95b,
+-    0x503d3974,
+-    0x503db98a,
+-    0x503e3997,
+-    0x503eb9ad,
+-    0x503f39bf,
++    0x503237bb,
++    0x5032b7ca,
++    0x503337d5,
++    0x5033b7e5,
++    0x503437fe,
++    0x5034b818,
++    0x50353826,
++    0x5035b83c,
++    0x5036384e,
++    0x5036b864,
++    0x5037387d,
++    0x5037b890,
++    0x503838a8,
++    0x5038b8b9,
++    0x503938ce,
++    0x5039b8e2,
++    0x503a3902,
++    0x503ab918,
++    0x503b3930,
++    0x503bb942,
++    0x503c395e,
++    0x503cb975,
++    0x503d398e,
++    0x503db9a4,
++    0x503e39b1,
++    0x503eb9c7,
++    0x503f39d9,
+     0x503f83b3,
+-    0x504039d2,
+-    0x5040b9e2,
+-    0x504139fc,
+-    0x5041ba0b,
+-    0x50423a25,
+-    0x5042ba42,
+-    0x50433a52,
+-    0x5043ba62,
+-    0x50443a7f,
++    0x504039ec,
++    0x5040b9fc,
++    0x50413a16,
++    0x5041ba25,
++    0x50423a3f,
++    0x5042ba5c,
++    0x50433a6c,
++    0x5043ba7c,
++    0x50443a99,
+     0x50448469,
+-    0x50453a93,
+-    0x5045bab1,
+-    0x50463ac4,
+-    0x5046bada,
+-    0x50473aec,
+-    0x5047bb01,
+-    0x50483b27,
+-    0x5048bb35,
+-    0x50493b48,
+-    0x5049bb5d,
+-    0x504a3b73,
+-    0x504abb83,
+-    0x504b3ba3,
+-    0x504bbbb6,
+-    0x504c3bd9,
+-    0x504cbc07,
+-    0x504d3c34,
+-    0x504dbc51,
+-    0x504e3c6c,
+-    0x504ebc88,
+-    0x504f3c9a,
+-    0x504fbcb1,
+-    0x50503cc0,
++    0x50453aad,
++    0x5045bacb,
++    0x50463ade,
++    0x5046baf4,
++    0x50473b06,
++    0x5047bb1b,
++    0x50483b41,
++    0x5048bb4f,
++    0x50493b62,
++    0x5049bb77,
++    0x504a3b8d,
++    0x504abb9d,
++    0x504b3bbd,
++    0x504bbbd0,
++    0x504c3bf3,
++    0x504cbc21,
++    0x504d3c4e,
++    0x504dbc6b,
++    0x504e3c86,
++    0x504ebca2,
++    0x504f3cb4,
++    0x504fbccb,
++    0x50503cda,
+     0x50508729,
+-    0x50513cd3,
+-    0x5051ba71,
+-    0x50523c19,
++    0x50513ced,
++    0x5051ba8b,
++    0x50523c33,
+     0x58321011,
+     0x68320fd3,
+     0x68328d2b,
+@@ -822,19 +823,19 @@ const uint32_t kOpenSSLReasonValues[] = {
+     0x7c32130c,
+     0x80321560,
+     0x80328090,
+-    0x8033349d,
++    0x803334b7,
+     0x803380b9,
+-    0x803434ac,
+-    0x8034b414,
+-    0x80353432,
+-    0x8035b4c0,
+-    0x80363474,
+-    0x8036b423,
+-    0x80373466,
+-    0x8037b401,
+-    0x80383487,
+-    0x8038b443,
+-    0x80393458,
++    0x803434c6,
++    0x8034b42e,
++    0x8035344c,
++    0x8035b4da,
++    0x8036348e,
++    0x8036b43d,
++    0x80373480,
++    0x8037b41b,
++    0x803834a1,
++    0x8038b45d,
++    0x80393472,
+     0x84320bb0,
+     0x84328bc9,
+ };
+@@ -1325,6 +1326,7 @@ const char kOpenSSLReasonStringData[] =
+     "NULL_SSL_CTX\0"
+     "NULL_SSL_METHOD_PASSED\0"
+     "OCSP_CB_ERROR\0"
++    "OFFER_ONLY_VALUE_SELECTED\0"
+     "OLD_SESSION_CIPHER_NOT_RETURNED\0"
+     "OLD_SESSION_PRF_HASH_MISMATCH\0"
+     "OLD_SESSION_VERSION_NOT_RETURNED\0"
 diff --git a/include/openssl/aead.h b/include/openssl/aead.h
 index d23c16d..9c287a4 100644
 --- a/include/openssl/aead.h
@@ -286,7 +873,7 @@ index d23c16d..9c287a4 100644
  OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_256_cbc_sha1_tls(void);
  OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_256_cbc_sha1_tls_implicit_iv(void);
 diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
-index 055b3e0..8101d16 100644
+index 055b3e0..8013bb3 100644
 --- a/include/openssl/ssl.h
 +++ b/include/openssl/ssl.h
 @@ -620,6 +620,14 @@ OPENSSL_EXPORT int SSL_version(const SSL *ssl);
@@ -325,7 +912,16 @@ index 055b3e0..8101d16 100644
  
  // The following constants are not cipher suites, but are used in the protocol
  // as signalling values.
-@@ -2586,6 +2608,11 @@ OPENSSL_EXPORT size_t SSL_CTX_get_num_tickets(const SSL_CTX *ctx);
+@@ -1708,6 +1730,8 @@ OPENSSL_EXPORT size_t SSL_get_all_standard_cipher_names(const char **out,
+ // TLS 1.3 ciphers do not participate in this mechanism and instead have a
+ // built-in preference order. Functions to set cipher lists do not affect TLS
+ // 1.3, and functions to query the cipher list do not include TLS 1.3 ciphers.
++// A cipher string naming only TLS 1.3 ciphers is not an error and configures an
++// empty cipher list for TLS 1.2 and below.
+ 
+ // SSL_DEFAULT_CIPHER_LIST is the default cipher suite configuration. It is
+ // substituted when a cipher string starts with 'DEFAULT'.
+@@ -2586,6 +2610,11 @@ OPENSSL_EXPORT size_t SSL_CTX_get_num_tickets(const SSL_CTX *ctx);
  #define SSL_GROUP_X25519_MLKEM768 0x11ec
  #define SSL_GROUP_X25519_KYBER768_DRAFT00 0x6399
  #define SSL_GROUP_MLKEM1024 0x0202
@@ -337,7 +933,7 @@ index 055b3e0..8101d16 100644
  
  // SSL_CTX_set1_group_ids sets the preferred groups for |ctx| to |group_ids|.
  // Each element of |group_ids| should be a unique one of the |SSL_GROUP_*|
-@@ -5508,6 +5535,82 @@ OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
+@@ -5508,6 +5537,122 @@ OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
  // permute extensions. For now, this is only implemented for the ClientHello.
  OPENSSL_EXPORT void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled);
  
@@ -359,12 +955,52 @@ index 055b3e0..8101d16 100644
 +// ec_point_formats and session_ticket extensions are then sent when listed even
 +// in a TLS 1.3-only ClientHello. A GREASE value in the list places one of the two
 +// GREASE extensions, when GREASE is enabled; |TLSEXT_TYPE_padding| places a
-+// padding extension of |SSL_CTX_set_padding_length| bytes; and
-+// |TLSEXT_TYPE_encrypt_then_mac| places an encrypt_then_mac extension, which is
-+// not implemented and so only sent where RFC 7366 has servers ignore it: when no
-+// CBC cipher suite is offered.
++// padding extension of |SSL_CTX_set_padding_length| bytes;
++// |TLSEXT_TYPE_signature_algorithms_cert| places the list
++// |SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS_CERT|, if set (see
++// |SSL_CTX_set1_client_hello_list|); and |TLSEXT_TYPE_encrypt_then_mac| places
++// an encrypt_then_mac extension (RFC 7366). This library does not implement
++// encrypt-then-MAC, so a server accepting it for a CBC cipher suite fails the
++// handshake with |SSL_R_OFFER_ONLY_VALUE_SELECTED|.
 +OPENSSL_EXPORT void SSL_CTX_set_strict_extension_order(SSL_CTX *ctx,
 +                                                      int enabled);
++
++// SSL_CTX_set1_client_hello_list configures clients on |ctx| to write |list|,
++// one of the |SSL_CLIENT_HELLO_*| lists below, of their initial ClientHello as
++// the |num_values| values of |values|, in that order, repeats and all: each
++// GREASE value (RFC 8701) stands for the handshake's GREASE value for that
++// list, and neither |SSL_CTX_set_grease_enabled| nor the other settings add or
++// remove any. If |values| is NULL, the list is written as usual. It returns one
++// on success and zero on error.
++//
++// The list may offer values this library does not implement, or that |ctx| is
++// not configured to negotiate. Only the configured values the list offers are
++// negotiated: the cipher list and TLS 1.3 cipher order, supported groups,
++// verify signature algorithm preferences and version range. A server selecting
++// one of the other values the list offers (an offer-only value) fails the
++// handshake with |SSL_R_OFFER_ONLY_VALUE_SELECTED|, its error data naming the
++// selection, so a caller relaying another client's ClientHello can let that
++// client negotiate it directly. So does a server certificate whose key type is
++// not implemented while the signature_algorithms list offers algorithms that
++// are not configured, and a compressed ECDHE point while the ec_point_formats
++// list offers a compressed format.
++//
++// |SSL_CLIENT_HELLO_KEY_SHARES| lists the groups to send key shares for, each
++// at most once and a configured group the supported_groups list offers, or
++// else the ClientHello fails to be written. |SSL_CLIENT_HELLO_EC_POINT_FORMATS|
++// takes values up to 255. |SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS_CERT| is only
++// sent where a strict extension order places it (see
++// |SSL_CTX_set_strict_extension_order|).
++#define SSL_CLIENT_HELLO_CIPHER_SUITES 0
++#define SSL_CLIENT_HELLO_SUPPORTED_GROUPS 1
++#define SSL_CLIENT_HELLO_KEY_SHARES 2
++#define SSL_CLIENT_HELLO_SUPPORTED_VERSIONS 3
++#define SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS 4
++#define SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS_CERT 5
++#define SSL_CLIENT_HELLO_EC_POINT_FORMATS 6
++OPENSSL_EXPORT int SSL_CTX_set1_client_hello_list(SSL_CTX *ctx, int list,
++                                                  const uint16_t *values,
++                                                  size_t num_values);
 +
 +// SSL_CTX_set_grease_signature_algorithms configures whether clients on |ctx|
 +// start their signature_algorithms extension with a GREASE value (RFC 8701).
@@ -420,7 +1056,7 @@ index 055b3e0..8101d16 100644
  // SSL_set_permute_extensions configures whether sockets on |ssl| should
  // permute extensions. For now, this is only implemented for the ClientHello.
  OPENSSL_EXPORT void SSL_set_permute_extensions(SSL *ssl, int enabled);
-@@ -5891,7 +5994,6 @@ DEFINE_STACK_OF(SSL_COMP)
+@@ -5891,7 +6036,6 @@ DEFINE_STACK_OF(SSL_COMP)
  #define SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG 0
  #define SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG 0
  #define SSL_OP_NO_COMPRESSION 0
@@ -428,6 +1064,14 @@ index 055b3e0..8101d16 100644
  #define SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION 0
  #define SSL_OP_NO_SSLv2 0
  #define SSL_OP_NO_SSLv3 0
+@@ -7055,6 +7199,7 @@ BSSL_NAMESPACE_END
+ #define SSL_R_UNSUPPORTED_CERTIFICATE 334
+ #define SSL_R_MISSING_KEY 335
+ #define SSL_R_INVALID_RAW_PUBLIC_KEY 336
++#define SSL_R_OFFER_ONLY_VALUE_SELECTED 337
+ #define SSL_R_SSLV3_ALERT_CLOSE_NOTIFY 1000
+ #define SSL_R_SSLV3_ALERT_UNEXPECTED_MESSAGE 1010
+ #define SSL_R_SSLV3_ALERT_BAD_RECORD_MAC 1020
 diff --git a/include/openssl/tls1.h b/include/openssl/tls1.h
 index c3e4098..ffb5c00 100644
 --- a/include/openssl/tls1.h
@@ -504,10 +1148,10 @@ index e288f3c..214a4d6 100644
        !CBB_add_u16_length_prefixed(cbb.get(), &enc_cbb) ||
        !CBB_add_bytes(&enc_cbb, enc, sizeof(enc)) ||
 diff --git a/ssl/extensions.cc b/ssl/extensions.cc
-index db1a291..c7c49b3 100644
+index db1a291..e922b76 100644
 --- a/ssl/extensions.cc
 +++ b/ssl/extensions.cc
-@@ -115,6 +115,26 @@ static bool is_post_quantum_group(uint16_t id) {
+@@ -115,6 +115,73 @@ static bool is_post_quantum_group(uint16_t id) {
    }
  }
  
@@ -531,10 +1175,57 @@ index db1a291..c7c49b3 100644
 +  return false;
 +}
 +
++bool ssl_is_grease_value(uint16_t value) {
++  return (value & 0x0f0f) == 0x0a0a && (value >> 8) == (value & 0xff);
++}
++
++const Array<uint16_t> *ssl_client_hello_list(const SSL_HANDSHAKE *hs,
++                                             int list) {
++  const auto &values = hs->ssl->ctx->client_hello_lists[list];
++  return values.has_value() ? &*values : nullptr;
++}
++
++bool ssl_client_hello_offers(const SSL_HANDSHAKE *hs, int list,
++                             uint16_t value) {
++  const Array<uint16_t> *values = ssl_client_hello_list(hs, list);
++  return values == nullptr ||
++         std::find(values->begin(), values->end(), value) != values->end();
++}
++
++bool ssl_add_client_hello_list(const SSL_HANDSHAKE *hs, CBB *out, int list,
++                               enum ssl_grease_index_t grease) {
++  for (uint16_t value : *ssl_client_hello_list(hs, list)) {
++    if (!CBB_add_u16(out, ssl_is_grease_value(value)
++                              ? ssl_get_grease_value(hs, grease)
++                              : value)) {
++      return false;
++    }
++  }
++  return true;
++}
++
++void ssl_put_selection_error(const SSL_HANDSHAKE *hs, int list, uint16_t value,
++                             bool supported, int reason) {
++  if (supported || ssl_is_grease_value(value) ||
++      ssl_client_hello_list(hs, list) == nullptr ||
++      !ssl_client_hello_offers(hs, list, value)) {
++    OPENSSL_PUT_ERROR(SSL, reason);
++    return;
++  }
++  static const char *const kListNames[kNumClientHelloLists] = {
++      "cipher suite",        "group",
++      "key share",           "version",
++      "signature algorithm", "signature_algorithms_cert value",
++      "ec_point_format",
++  };
++  OPENSSL_PUT_ERROR(SSL, SSL_R_OFFER_ONLY_VALUE_SELECTED);
++  ERR_add_error_dataf("%s %04x", kListNames[list], value);
++}
++
  bool ssl_parse_client_hello_with_trailing_data(const SSL *ssl, CBS *cbs,
                                                 SSL_CLIENT_HELLO *out) {
    OPENSSL_memset(out, 0, sizeof(*out));
-@@ -239,7 +259,8 @@ bool tls1_get_shared_group(SSL_HANDSHAKE *hs, uint16_t *out_group_id) {
+@@ -239,7 +306,8 @@ bool tls1_get_shared_group(SSL_HANDSHAKE *hs, uint16_t *out_group_id) {
      // Post-quantum key agreements don't fit in the u8-length-prefixed
      // ECPoint field in TLS 1.2 and below.
      if (ssl_protocol_version(ssl) < TLS1_3_VERSION &&
@@ -544,7 +1235,7 @@ index db1a291..c7c49b3 100644
        match_it = supp.end();
      }
      if (match_it != supp.end()) {
-@@ -266,9 +287,10 @@ bool tls1_get_shared_group(SSL_HANDSHAKE *hs, uint16_t *out_group_id) {
+@@ -266,9 +334,10 @@ bool tls1_get_shared_group(SSL_HANDSHAKE *hs, uint16_t *out_group_id) {
  }
  
  bool tls1_check_group_id(const SSL_HANDSHAKE *hs, uint16_t group_id) {
@@ -557,7 +1248,73 @@ index db1a291..c7c49b3 100644
      return false;
    }
  
-@@ -702,8 +724,10 @@ static bool ext_ri_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
+@@ -277,6 +346,13 @@ bool tls1_check_group_id(const SSL_HANDSHAKE *hs, uint16_t group_id) {
+     return false;
+   }
+ 
++  // A client negotiates only groups its ClientHello offered.
++  if (!hs->ssl->server &&
++      !ssl_client_hello_offers(hs, SSL_CLIENT_HELLO_SUPPORTED_GROUPS,
++                               group_id)) {
++    return false;
++  }
++
+   for (uint16_t supported : hs->config->supported_group_list) {
+     if (supported == group_id) {
+       return true;
+@@ -357,9 +433,19 @@ bool tls12_check_peer_sigalg(const SSL_HANDSHAKE *hs, uint8_t *out_alert,
+   // The peer must have selected an algorithm that is consistent with its public
+   // key, the TLS version, and what we advertised.
+   Span<const uint16_t> sigalgs = tls12_get_verify_sigalgs(hs);
+-  if (std::find(sigalgs.begin(), sigalgs.end(), sigalg) == sigalgs.end() ||
+-      !ssl_pkey_supports_algorithm(hs->ssl, pkey, sigalg, /*is_verify=*/true)) {
+-    OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_SIGNATURE_TYPE);
++  const bool configured =
++      std::find(sigalgs.begin(), sigalgs.end(), sigalg) != sigalgs.end();
++  const bool client = !hs->ssl->server;
++  if (!configured ||
++      !ssl_pkey_supports_algorithm(hs->ssl, pkey, sigalg, /*is_verify=*/true) ||
++      (client && !ssl_client_hello_offers(
++                     hs, SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS, sigalg))) {
++    if (client) {
++      ssl_put_selection_error(hs, SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS, sigalg,
++                              configured, SSL_R_WRONG_SIGNATURE_TYPE);
++    } else {
++      OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_SIGNATURE_TYPE);
++    }
+     *out_alert = SSL_AD_ILLEGAL_PARAMETER;
+     return false;
+   }
+@@ -367,6 +453,28 @@ bool tls12_check_peer_sigalg(const SSL_HANDSHAKE *hs, uint8_t *out_alert,
+   return true;
+ }
+ 
++bool ssl_leaf_key_offer_only(const SSL_HANDSHAKE *hs) {
++  const uint32_t err = ERR_peek_last_error();
++  const Array<uint16_t> *offered =
++      ssl_client_hello_list(hs, SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS);
++  if (hs->ssl->server || offered == nullptr ||
++      ERR_GET_LIB(err) != ERR_LIB_EVP ||
++      ERR_GET_REASON(err) != EVP_R_UNSUPPORTED_ALGORITHM) {
++    return false;
++  }
++  Span<const uint16_t> configured = tls12_get_verify_sigalgs(hs);
++  if (std::none_of(offered->begin(), offered->end(), [&](uint16_t sigalg) {
++        return !ssl_is_grease_value(sigalg) &&
++               std::find(configured.begin(), configured.end(), sigalg) ==
++                   configured.end();
++      })) {
++    return false;
++  }
++  OPENSSL_PUT_ERROR(SSL, SSL_R_OFFER_ONLY_VALUE_SELECTED);
++  ERR_add_error_dataf("a certificate key type");
++  return true;
++}
++
+ // Flags.
+ //
+ // https://www.ietf.org/archive/id/draft-ietf-tls-tlsflags-14.html
+@@ -702,8 +810,10 @@ static bool ext_ri_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
                                     ssl_client_hello_type_t type) {
    const SSL *const ssl = hs->ssl;
    // Renegotiation indication is not necessary in TLS 1.3.
@@ -570,7 +1327,7 @@ index db1a291..c7c49b3 100644
      return true;
    }
  
-@@ -859,7 +883,9 @@ static bool ext_ems_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
+@@ -859,7 +969,9 @@ static bool ext_ems_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
                                      CBB *out_compressible,
                                      ssl_client_hello_type_t type) {
    // Extended master secret is not necessary in TLS 1.3.
@@ -581,7 +1338,7 @@ index db1a291..c7c49b3 100644
      return true;
    }
  
-@@ -937,7 +963,9 @@ static bool ext_ticket_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
+@@ -937,7 +1049,9 @@ static bool ext_ticket_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
                                         ssl_client_hello_type_t type) {
    const SSL *const ssl = hs->ssl;
    // TLS 1.3 uses a different ticket extension.
@@ -592,17 +1349,35 @@ index db1a291..c7c49b3 100644
        SSL_get_options(ssl) & SSL_OP_NO_TICKET) {
      return true;
    }
-@@ -1024,6 +1052,9 @@ static bool ext_sigalgs_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
+@@ -1023,9 +1137,24 @@ static bool ext_sigalgs_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
+   CBB contents, sigalgs_cbb;
    if (!CBB_add_u16(out_compressible, TLSEXT_TYPE_signature_algorithms) ||
        !CBB_add_u16_length_prefixed(out_compressible, &contents) ||
-       !CBB_add_u16_length_prefixed(&contents, &sigalgs_cbb) ||
-+      (hs->config->grease_signature_algorithms &&
-+       !CBB_add_u16(&sigalgs_cbb,
-+                    ssl_get_grease_value(hs, ssl_grease_signature_algorithm))) ||
-       !tls12_add_verify_sigalgs(hs, &sigalgs_cbb) ||
-       !CBB_flush(out_compressible)) {
+-      !CBB_add_u16_length_prefixed(&contents, &sigalgs_cbb) ||
+-      !tls12_add_verify_sigalgs(hs, &sigalgs_cbb) ||
+-      !CBB_flush(out_compressible)) {
++      !CBB_add_u16_length_prefixed(&contents, &sigalgs_cbb)) {
++    return false;
++  }
++  if (ssl_client_hello_list(hs, SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS) !=
++      nullptr) {
++    if (!ssl_add_client_hello_list(hs, &sigalgs_cbb,
++                                   SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS,
++                                   ssl_grease_signature_algorithm)) {
++      return false;
++    }
++  } else if ((hs->config->grease_signature_algorithms &&
++              !CBB_add_u16(&sigalgs_cbb,
++                           ssl_get_grease_value(
++                               hs, ssl_grease_signature_algorithm))) ||
++             !tls12_add_verify_sigalgs(hs, &sigalgs_cbb)) {
++    return false;
++  }
++  if (!CBB_flush(out_compressible)) {
      return false;
-@@ -1820,7 +1851,9 @@ static bool ext_ec_point_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
+   }
+ 
+@@ -1820,11 +1949,29 @@ static bool ext_ec_point_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
                                           CBB *out_compressible,
                                           ssl_client_hello_type_t type) {
    // The point format extension is unnecessary in TLS 1.3.
@@ -613,7 +1388,28 @@ index db1a291..c7c49b3 100644
      return true;
    }
  
-@@ -1928,7 +1961,11 @@ static bool should_offer_psk(const SSL_HANDSHAKE *hs,
+-  return ext_ec_point_add_extension(hs, out);
++  const Array<uint16_t> *listed =
++      ssl_client_hello_list(hs, SSL_CLIENT_HELLO_EC_POINT_FORMATS);
++  if (listed == nullptr) {
++    return ext_ec_point_add_extension(hs, out);
++  }
++  CBB contents, formats;
++  if (!CBB_add_u16(out, TLSEXT_TYPE_ec_point_formats) ||
++      !CBB_add_u16_length_prefixed(out, &contents) ||
++      !CBB_add_u8_length_prefixed(&contents, &formats)) {
++    return false;
++  }
++  for (uint16_t format : *listed) {
++    if (!CBB_add_u8(&formats, static_cast<uint8_t>(format))) {
++      return false;
++    }
++  }
++  return CBB_flush(out);
+ }
+ 
+ static bool ext_ec_point_parse_serverhello(SSL_HANDSHAKE *hs,
+@@ -1928,7 +2075,11 @@ static bool should_offer_psk(const SSL_HANDSHAKE *hs,
    // contain an early_data extension without a pre_shared_key extension and
    // potentially break the recovery flow.
    return hs->max_version >= TLS1_3_VERSION && !hs->pre_shared_keys.empty() &&
@@ -626,7 +1422,7 @@ index db1a291..c7c49b3 100644
  }
  
  static size_t ext_pre_shared_key_clienthello_length(
-@@ -2215,7 +2252,8 @@ bool ssl_ext_pre_shared_key_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
+@@ -2215,7 +2366,8 @@ bool ssl_ext_pre_shared_key_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
  static bool ext_psk_key_exchange_modes_add_clienthello(
      const SSL_HANDSHAKE *hs, CBB *out, CBB *out_compressible,
      ssl_client_hello_type_t type) {
@@ -636,7 +1432,130 @@ index db1a291..c7c49b3 100644
      return true;
    }
    // We do not support resumption with PAKEs, so do not offer any PSK key
-@@ -3257,7 +3295,23 @@ static bool ext_quic_transport_params_add_serverhello_legacy(SSL_HANDSHAKE *hs,
+@@ -2384,6 +2536,31 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
+ 
+   std::optional<Span<const uint16_t>> selected_key_shares;
+ 
++  // The first ClientHello's key shares may be set, GREASE and all, with
++  // |SSL_CTX_set1_client_hello_list|: each for a configured group it offers, at
++  // most once.
++  const Array<uint16_t> *listed =
++      ssl_client_hello_list(hs, SSL_CLIENT_HELLO_KEY_SHARES);
++  if (override_group_id == 0 && listed != nullptr) {
++    for (auto it = listed->begin(); it != listed->end(); ++it) {
++      if (ssl_is_grease_value(*it)) {
++        continue;
++      }
++      if (std::find(listed->begin(), it, *it) != it) {
++        OPENSSL_PUT_ERROR(SSL, SSL_R_DUPLICATE_KEY_SHARE);
++        return false;
++      }
++      if (std::find(supported_group_list.begin(), supported_group_list.end(),
++                    *it) == supported_group_list.end() ||
++          !ssl_client_hello_offers(hs, SSL_CLIENT_HELLO_SUPPORTED_GROUPS,
++                                   *it)) {
++        OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_CURVE);
++        return false;
++      }
++    }
++    selected_key_shares.emplace(*listed);
++  }
++
+   // This is used for HelloRetryRequest, where we have already been given the
+   // correct group to use.
+   if (override_group_id != 0) {
+@@ -2441,7 +2618,8 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
+     return false;
+   }
+ 
+-  if (override_group_id == 0 && ssl->ctx->grease_enabled) {
++  if (override_group_id == 0 && listed == nullptr &&
++      ssl->ctx->grease_enabled) {
+     // Add a fake group. See RFC 8701.
+     if (!CBB_add_u16(cbb.get(), ssl_get_grease_value(hs, ssl_grease_group)) ||
+         !CBB_add_u16(cbb.get(), 1 /* length */) ||
+@@ -2452,6 +2630,15 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
+ 
+   CBB key_exchange;
+   for (const uint16_t group_id : *selected_key_shares) {
++    // Only a listed key share is GREASE, placed where the list has it.
++    if (ssl_is_grease_value(group_id)) {
++      if (!CBB_add_u16(cbb.get(), ssl_get_grease_value(hs, ssl_grease_group)) ||
++          !CBB_add_u16(cbb.get(), 1 /* length */) ||
++          !CBB_add_u8(cbb.get(), 0 /* one byte key share */)) {
++        return false;
++      }
++      continue;
++    }
+     UniquePtr<SSLKeyShare> key_share = SSLKeyShare::Create(group_id);
+     if (key_share == nullptr ||                                    //
+         !CBB_add_u16(cbb.get(), group_id) ||                       //
+@@ -2478,7 +2665,8 @@ static bool ext_key_share_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
+   // HelloRetryRequest.
+   assert(!hs->key_share_bytes.empty() ||
+          (hs->config->client_key_share_selections.has_value() &&
+-          hs->config->client_key_share_selections->empty()));
++          hs->config->client_key_share_selections->empty()) ||
++         ssl_client_hello_list(hs, SSL_CLIENT_HELLO_KEY_SHARES) != nullptr);
+ 
+   CBB contents, kse_bytes;
+   if (!CBB_add_u16(out_compressible, TLSEXT_TYPE_key_share) ||
+@@ -2517,7 +2705,11 @@ bool ssl_ext_key_share_parse_serverhello(SSL_HANDSHAKE *hs,
+                    });
+   if (key_share_it == hs->key_shares.end()) {
+     *out_alert = SSL_AD_ILLEGAL_PARAMETER;
+-    OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_CURVE);
++    const Span<const uint16_t> groups = hs->config->supported_group_list;
++    ssl_put_selection_error(
++        hs, SSL_CLIENT_HELLO_SUPPORTED_GROUPS, group_id,
++        std::find(groups.begin(), groups.end(), group_id) != groups.end(),
++        SSL_R_WRONG_CURVE);
+     return false;
+   }
+   if (!(*key_share_it)->Decap(out_secret, out_alert, ciphertext)) {
+@@ -2630,7 +2822,11 @@ static bool ext_supported_versions_add_clienthello(
+     const SSL_HANDSHAKE *hs, CBB *out, CBB *out_compressible,
+     ssl_client_hello_type_t type) {
+   const SSL *const ssl = hs->ssl;
+-  if (hs->max_version <= TLS1_2_VERSION) {
++  // A list set with |SSL_CTX_set1_client_hello_list| goes as given.
++  const bool listed =
++      type != ssl_client_hello_inner &&
++      ssl_client_hello_list(hs, SSL_CLIENT_HELLO_SUPPORTED_VERSIONS) != nullptr;
++  if (hs->max_version <= TLS1_2_VERSION && !listed) {
+     return true;
+   }
+ 
+@@ -2647,6 +2843,13 @@ static bool ext_supported_versions_add_clienthello(
+     return false;
+   }
+ 
++  if (listed) {
++    return ssl_add_client_hello_list(hs, &versions,
++                                     SSL_CLIENT_HELLO_SUPPORTED_VERSIONS,
++                                     ssl_grease_version) &&
++           CBB_flush(out);
++  }
++
+   // Add a fake version. See RFC 8701.
+   if (ssl->ctx->grease_enabled &&
+       !CBB_add_u16(&versions, ssl_get_grease_value(hs, ssl_grease_version))) {
+@@ -2711,6 +2914,14 @@ static bool ext_supported_groups_add_clienthello(const SSL_HANDSHAKE *hs,
+     return false;
+   }
+ 
++  // A list set with |SSL_CTX_set1_client_hello_list| goes as given.
++  if (ssl_client_hello_list(hs, SSL_CLIENT_HELLO_SUPPORTED_GROUPS) != nullptr) {
++    return ssl_add_client_hello_list(hs, &groups_bytes,
++                                     SSL_CLIENT_HELLO_SUPPORTED_GROUPS,
++                                     ssl_grease_group) &&
++           CBB_flush(out_compressible);
++  }
++
+   // Add a fake group. See RFC 8701.
+   if (ssl->ctx->grease_enabled &&
+       !CBB_add_u16(&groups_bytes, ssl_get_grease_value(hs, ssl_grease_group))) {
+@@ -3257,7 +3468,23 @@ static bool ext_quic_transport_params_add_serverhello_legacy(SSL_HANDSHAKE *hs,
  static bool ext_delegated_credential_add_clienthello(
      const SSL_HANDSHAKE *hs, CBB *out, CBB *out_compressible,
      ssl_client_hello_type_t type) {
@@ -661,7 +1580,7 @@ index db1a291..c7c49b3 100644
  }
  
  static bool ext_delegated_credential_parse_clienthello(SSL_HANDSHAKE *hs,
-@@ -4056,6 +4110,51 @@ static bool ext_server_cert_type_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
+@@ -4056,6 +4283,51 @@ static bool ext_server_cert_type_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
    return true;
  }
  
@@ -713,7 +1632,7 @@ index db1a291..c7c49b3 100644
  // kExtensions contains all the supported extensions.
  static const struct tls_extension kExtensions[] = {
      {
-@@ -4285,6 +4384,13 @@ static const struct tls_extension kExtensions[] = {
+@@ -4285,6 +4557,13 @@ static const struct tls_extension kExtensions[] = {
          ext_server_padding_parse_clienthello,
          ext_server_padding_add_serverhello,
      },
@@ -727,7 +1646,7 @@ index db1a291..c7c49b3 100644
  };
  
  #define kNumExtensions (sizeof(kExtensions) / sizeof(struct tls_extension))
-@@ -4297,6 +4403,35 @@ static_assert(kNumExtensions <=
+@@ -4297,6 +4576,35 @@ static_assert(kNumExtensions <=
                "too many extensions for received bitset");
  
  bool ssl_setup_extension_permutation(SSL_HANDSHAKE *hs) {
@@ -763,7 +1682,7 @@ index db1a291..c7c49b3 100644
    if (!hs->config->permute_extensions) {
      return true;
    }
-@@ -4344,6 +4479,110 @@ static bool add_padding_extension(CBB *cbb, uint16_t ext, size_t len) {
+@@ -4344,6 +4652,112 @@ static bool add_padding_extension(CBB *cbb, uint16_t ext, size_t len) {
    return CBB_flush(cbb);
  }
  
@@ -777,20 +1696,6 @@ index db1a291..c7c49b3 100644
 +  }
 +}
 +
-+// ssl_client_hello_offers_cbc returns whether |hs|'s ClientHello offers a CBC
-+// cipher suite, which RFC 7366's encrypt_then_mac would apply to.
-+static bool ssl_client_hello_offers_cbc(const SSL_HANDSHAKE *hs) {
-+  if (hs->min_version >= TLS1_3_VERSION) {
-+    return false;
-+  }
-+  for (const SSL_CIPHER *cipher : SSL_get_ciphers(hs->ssl)) {
-+    if (cipher->algorithm_mac != SSL_AEAD) {
-+      return true;
-+    }
-+  }
-+  return false;
-+}
-+
 +// ssl_add_listed_clienthello_extensions writes the extensions of |hs|'s strict
 +// extension order to |extensions|, a child of |out|, then flushes |out|. See
 +// |SSL_CTX_set_strict_extension_order|.
@@ -799,7 +1704,7 @@ index db1a291..c7c49b3 100644
 +    ssl_client_hello_type_t type) {
 +  SSL *const ssl = hs->ssl;
 +  size_t greased = 0;
-+  bool padded = false, etm = false;
++  bool padded = false, etm = false, sigalgs_cert = false;
 +  for (uint16_t id : hs->config->extension_order) {
 +    if ((id & 0x0f0f) == 0x0a0a && (id >> 8) == (id & 0xff)) {
 +      // There are two GREASE extensions: an empty one, then a one-byte one.
@@ -824,12 +1729,28 @@ index db1a291..c7c49b3 100644
 +      continue;
 +    }
 +    if (id == TLSEXT_TYPE_encrypt_then_mac) {
-+      if (!etm && !ssl_client_hello_offers_cbc(hs) &&
-+          (!CBB_add_u16(extensions, TLSEXT_TYPE_encrypt_then_mac) ||
-+           !CBB_add_u16(extensions, 0 /* length */))) {
++      if (!etm && (!CBB_add_u16(extensions, TLSEXT_TYPE_encrypt_then_mac) ||
++                   !CBB_add_u16(extensions, 0 /* length */))) {
 +        return false;
 +      }
 +      etm = true;
++      continue;
++    }
++    if (id == TLSEXT_TYPE_signature_algorithms_cert) {
++      CBB contents, sigalgs;
++      if (!sigalgs_cert &&
++          ssl_client_hello_list(
++              hs, SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS_CERT) != nullptr &&
++          (!CBB_add_u16(extensions, TLSEXT_TYPE_signature_algorithms_cert) ||
++           !CBB_add_u16_length_prefixed(extensions, &contents) ||
++           !CBB_add_u16_length_prefixed(&contents, &sigalgs) ||
++           !ssl_add_client_hello_list(
++               hs, &sigalgs, SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS_CERT,
++               ssl_grease_signature_algorithm) ||
++           !CBB_flush(extensions))) {
++        return false;
++      }
++      sigalgs_cert = true;
 +      continue;
 +    }
 +    uint32_t i;
@@ -874,7 +1795,7 @@ index db1a291..c7c49b3 100644
  static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
                                               CBB *out_encoded) {
    // When writing ClientHelloInner, we construct the real and encoded
-@@ -4479,6 +4718,10 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4479,6 +4893,10 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
    // important to reset this value.
    hs->extensions.sent = 0;
  
@@ -885,7 +1806,7 @@ index db1a291..c7c49b3 100644
    // Add a fake empty extension. See RFC 8701.
    if (ssl->ctx->grease_enabled &&
        !add_padding_extension(
-@@ -4515,6 +4758,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4515,6 +4933,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
      }
      last_was_empty = false;
    }
@@ -893,8 +1814,30 @@ index db1a291..c7c49b3 100644
  
    // In cleartext ClientHellos, we add the padding extension to work around
    // bugs. We also apply this padding to ClientHelloOuter, to keep the wire
+@@ -4710,6 +5129,21 @@ static bool ssl_scan_serverhello_tlsext(SSL_HANDSHAKE *hs, const CBS *cbs,
+       return false;
+     }
+ 
++    // A strict extension order may offer encrypt_then_mac, which a server may
++    // accept only for a CBC cipher suite (RFC 7366, section 2). This library
++    // does not implement it, so that selection is offer-only.
++    if (type == TLSEXT_TYPE_encrypt_then_mac &&
++        ssl_extension_listed(hs, TLSEXT_TYPE_encrypt_then_mac)) {
++      if (ssl_protocol_version(hs->ssl) < TLS1_3_VERSION &&
++          hs->new_cipher->algorithm_mac != SSL_AEAD) {
++        OPENSSL_PUT_ERROR(SSL, SSL_R_OFFER_ONLY_VALUE_SELECTED);
++        ERR_add_error_dataf("encrypt_then_mac");
++        *out_alert = SSL_AD_UNSUPPORTED_EXTENSION;
++        return false;
++      }
++      continue;
++    }
++
+     unsigned ext_index;
+     const struct tls_extension *const ext =
+         tls_extension_find(&ext_index, type);
 diff --git a/ssl/handshake_client.cc b/ssl/handshake_client.cc
-index 7ab6d2c..dd4592e 100644
+index 7ab6d2c..f589a6d 100644
 --- a/ssl/handshake_client.cc
 +++ b/ssl/handshake_client.cc
 @@ -26,6 +26,7 @@
@@ -905,7 +1848,34 @@ index 7ab6d2c..dd4592e 100644
  #include <openssl/ec_key.h>
  #include <openssl/ecdsa.h>
  #include <openssl/err.h>
-@@ -110,7 +111,15 @@ static bool ssl_write_client_cipher_list(const SSL_HANDSHAKE *hs, CBB *out,
+@@ -102,6 +103,26 @@ static bool ssl_write_client_cipher_list(const SSL_HANDSHAKE *hs, CBB *out,
+     return false;
+   }
+ 
++  // A list set with |SSL_CTX_set1_client_hello_list| goes as given, but for the
++  // renegotiation signalling value, not sent when renegotiating (RFC 5746,
++  // section 3.5).
++  if (const Array<uint16_t> *listed =
++          ssl_client_hello_list(hs, SSL_CLIENT_HELLO_CIPHER_SUITES);
++      listed != nullptr && type != ssl_client_hello_inner) {
++    for (uint16_t cipher : *listed) {
++      if (cipher == SSL_CIPHER_EMPTY_RENEGOTIATION_INFO_SCSV &&
++          ssl->s3->initial_handshake_complete) {
++        continue;
++      }
++      if (!CBB_add_u16(&child, ssl_is_grease_value(cipher)
++                                   ? ssl_get_grease_value(hs, ssl_grease_cipher)
++                                   : cipher)) {
++        return false;
++      }
++    }
++    return CBB_flush(out);
++  }
++
+   // Add a fake cipher suite. See RFC 8701.
+   if (ssl->ctx->grease_enabled &&
+       !CBB_add_u16(&child, ssl_get_grease_value(hs, ssl_grease_cipher))) {
+@@ -110,7 +131,15 @@ static bool ssl_write_client_cipher_list(const SSL_HANDSHAKE *hs, CBB *out,
  
    // Add TLS 1.3 ciphers. Order ChaCha20-Poly1305 relative to AES-GCM based on
    // hardware support.
@@ -922,7 +1892,7 @@ index 7ab6d2c..dd4592e 100644
      static const uint16_t kCiphersNoAESHardware[] = {
          SSL_CIPHER_CHACHA20_POLY1305_SHA256,
          SSL_CIPHER_AES_128_GCM_SHA256,
-@@ -169,6 +178,14 @@ static bool ssl_write_client_cipher_list(const SSL_HANDSHAKE *hs, CBB *out,
+@@ -169,6 +198,14 @@ static bool ssl_write_client_cipher_list(const SSL_HANDSHAKE *hs, CBB *out,
      }
    }
  
@@ -937,7 +1907,16 @@ index 7ab6d2c..dd4592e 100644
    if (ssl->mode & SSL_MODE_SEND_FALLBACK_SCSV) {
      if (!CBB_add_u16(&child, SSL_CIPHER_FALLBACK_SCSV)) {
        return false;
-@@ -420,18 +437,26 @@ static enum ssl_hs_wait_t do_start_connect(SSL_HANDSHAKE *hs) {
+@@ -389,7 +426,7 @@ static enum ssl_hs_wait_t do_start_connect(SSL_HANDSHAKE *hs) {
+   if (ssl->session != nullptr) {
+     session_type = ssl_session_get_type(ssl->session.get());
+     if (ssl->session->is_server ||
+-        !ssl_supports_version(hs, ssl->session->ssl_version) ||
++        !ssl_client_offers_version(hs, ssl->session->ssl_version) ||
+         // Do not offer TLS 1.2 sessions with ECH. ClientHelloInner does not
+         // offer TLS 1.2, and the cleartext session ID may leak the server
+         // identity.
+@@ -420,18 +457,26 @@ static enum ssl_hs_wait_t do_start_connect(SSL_HANDSHAKE *hs) {
    }
  
    // Compatibility mode sends a random session ID. Compatibility mode is
@@ -968,7 +1947,7 @@ index 7ab6d2c..dd4592e 100644
    }
  
    ssl_early_data_reason_t reason = should_offer_early_data(hs);
-@@ -494,7 +519,9 @@ static enum ssl_hs_wait_t do_early_reverify_server_certificate(
+@@ -494,7 +539,9 @@ static enum ssl_hs_wait_t do_early_reverify_server_certificate(
      }
    }
  
@@ -979,7 +1958,73 @@ index 7ab6d2c..dd4592e 100644
      return ssl_hs_error;
    }
  
-@@ -1051,7 +1078,24 @@ static enum ssl_hs_wait_t do_read_server_key_exchange(SSL_HANDSHAKE *hs) {
+@@ -605,8 +652,11 @@ static enum ssl_hs_wait_t do_read_server_hello(SSL_HANDSHAKE *hs) {
+     return ssl_hs_error;
+   }
+ 
+-  if (!ssl_supports_version(hs, server_version)) {
+-    OPENSSL_PUT_ERROR(SSL, SSL_R_UNSUPPORTED_PROTOCOL);
++  if (!ssl_client_offers_version(hs, server_version)) {
++    ssl_put_selection_error(hs, SSL_CLIENT_HELLO_SUPPORTED_VERSIONS,
++                            server_version,
++                            ssl_supports_version(hs, server_version),
++                            SSL_R_UNSUPPORTED_PROTOCOL);
+     ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_PROTOCOL_VERSION);
+     return ssl_hs_error;
+   }
+@@ -690,9 +740,11 @@ static enum ssl_hs_wait_t do_read_server_hello(SSL_HANDSHAKE *hs) {
+   OPENSSL_memcpy(ssl->s3->server_random, CBS_data(&server_hello.random),
+                  SSL3_RANDOM_SIZE);
+ 
+-  // Enforce the TLS 1.3 anti-downgrade feature.
++  // Enforce the TLS 1.3 anti-downgrade feature, when TLS 1.3 was offered.
+   if (!ssl->s3->initial_handshake_complete &&
+-      hs->max_version >= TLS1_3_VERSION) {
++      hs->max_version >= TLS1_3_VERSION &&
++      ssl_client_hello_offers(hs, SSL_CLIENT_HELLO_SUPPORTED_VERSIONS,
++                              TLS1_3_VERSION)) {
+     static_assert(
+         sizeof(kTLS12DowngradeRandom) == sizeof(kTLS13DowngradeRandom),
+         "downgrade signals have different size");
+@@ -709,17 +761,23 @@ static enum ssl_hs_wait_t do_read_server_hello(SSL_HANDSHAKE *hs) {
+     }
+   }
+ 
+-  // The cipher must be allowed in the selected version and enabled.
++  // The cipher must be allowed in the selected version, enabled and offered.
+   const SSL_CIPHER *cipher = SSL_get_cipher_by_value(server_hello.cipher_suite);
++  const bool configured =
++      cipher != nullptr &&
++      sk_SSL_CIPHER_find(SSL_get_ciphers(ssl), nullptr, cipher);
+   uint32_t mask_a, mask_k;
+   ssl_get_client_disabled(hs, &mask_a, &mask_k);
+-  if (cipher == nullptr ||                                               //
++  if (!configured ||                                                     //
+       (cipher->algorithm_mkey & mask_k) ||                               //
+       (cipher->algorithm_auth & mask_a) ||                               //
+       SSL_CIPHER_get_min_version(cipher) > ssl_protocol_version(ssl) ||  //
+       SSL_CIPHER_get_max_version(cipher) < ssl_protocol_version(ssl) ||  //
+-      !sk_SSL_CIPHER_find(SSL_get_ciphers(ssl), nullptr, cipher)) {
+-    OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_CIPHER_RETURNED);
++      !ssl_client_hello_offers(hs, SSL_CLIENT_HELLO_CIPHER_SUITES,
++                               server_hello.cipher_suite)) {
++    ssl_put_selection_error(hs, SSL_CLIENT_HELLO_CIPHER_SUITES,
++                            server_hello.cipher_suite, configured,
++                            SSL_R_WRONG_CIPHER_RETURNED);
+     ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+     return ssl_hs_error;
+   }
+@@ -875,6 +933,9 @@ static enum ssl_hs_wait_t do_read_server_certificate(SSL_HANDSHAKE *hs) {
+   }
+ 
+   if (!parse_ok) {
++    if (hs->peer_cert_type == TLSEXT_cert_type_x509) {
++      ssl_leaf_key_offer_only(hs);
++    }
+     ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
+     return ssl_hs_error;
+   }
+@@ -1051,7 +1112,24 @@ static enum ssl_hs_wait_t do_read_server_key_exchange(SSL_HANDSHAKE *hs) {
      hs->peer_psk_identity_hint.reset(raw);
    }
  
@@ -1005,7 +2050,38 @@ index 7ab6d2c..dd4592e 100644
      // Parse the server parameters.
      uint8_t group_type;
      uint16_t group_id;
-@@ -1381,6 +1425,62 @@ static enum ssl_hs_wait_t do_send_client_certificate(SSL_HANDSHAKE *hs) {
+@@ -1067,7 +1145,29 @@ static enum ssl_hs_wait_t do_read_server_key_exchange(SSL_HANDSHAKE *hs) {
+ 
+     // Ensure the group is consistent with preferences.
+     if (!tls1_check_group_id(hs, group_id)) {
+-      OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_CURVE);
++      const Span<const uint16_t> groups = hs->config->supported_group_list;
++      ssl_put_selection_error(
++          hs, SSL_CLIENT_HELLO_SUPPORTED_GROUPS, group_id,
++          std::find(groups.begin(), groups.end(), group_id) != groups.end(),
++          SSL_R_WRONG_CURVE);
++      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
++      return ssl_hs_error;
++    }
++
++    // This library takes only uncompressed points, so a compressed one is an
++    // offer-only selection where the ClientHello offered compressed formats.
++    const Array<uint16_t> *formats =
++        ssl_client_hello_list(hs, SSL_CLIENT_HELLO_EC_POINT_FORMATS);
++    if (formats != nullptr && CBS_len(&point) > 0 &&
++        (CBS_data(&point)[0] == POINT_CONVERSION_COMPRESSED ||
++         CBS_data(&point)[0] == (POINT_CONVERSION_COMPRESSED | 1)) &&
++        (group_id == SSL_GROUP_SECP256R1 || group_id == SSL_GROUP_SECP384R1 ||
++         group_id == SSL_GROUP_SECP521R1) &&
++        std::any_of(formats->begin(), formats->end(), [](uint16_t format) {
++          return format != TLSEXT_ECPOINTFORMAT_uncompressed;
++        })) {
++      OPENSSL_PUT_ERROR(SSL, SSL_R_OFFER_ONLY_VALUE_SELECTED);
++      ERR_add_error_dataf("a compressed ECDHE point");
+       ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+       return ssl_hs_error;
+     }
+@@ -1381,6 +1481,62 @@ static enum ssl_hs_wait_t do_send_client_certificate(SSL_HANDSHAKE *hs) {
  static_assert(sizeof(size_t) >= sizeof(unsigned),
                "size_t is smaller than unsigned");
  
@@ -1068,7 +2144,7 @@ index 7ab6d2c..dd4592e 100644
  static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
    SSL *const ssl = hs->ssl;
    ScopedCBB cbb;
-@@ -1484,6 +1584,10 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
+@@ -1484,6 +1640,10 @@ static enum ssl_hs_wait_t do_send_client_key_exchange(SSL_HANDSHAKE *hs) {
          !CBB_flush(&body)) {
        return ssl_hs_error;
      }
@@ -1080,10 +2156,22 @@ index 7ab6d2c..dd4592e 100644
      CBB child;
      if (!CBB_add_u8_length_prefixed(&body, &child)) {
 diff --git a/ssl/internal.h b/ssl/internal.h
-index 2bea8f6..d1e59e8 100644
+index 2bea8f6..60588a3 100644
 --- a/ssl/internal.h
 +++ b/ssl/internal.h
-@@ -219,6 +219,7 @@ BSSL_NAMESPACE_BEGIN
+@@ -165,6 +165,11 @@ bool ssl_get_version_range(const SSL_HANDSHAKE *hs, uint16_t *out_min_version,
+ // ssl_supports_version returns whether |hs| supports |version|.
+ bool ssl_supports_version(const SSL_HANDSHAKE *hs, uint16_t version);
+ 
++// ssl_client_offers_version returns whether |hs|, a client, offers |version|:
++// whether it supports it and its ClientHello's supported_versions list, if set
++// (see |SSL_CTX_set1_client_hello_list|), has it.
++bool ssl_client_offers_version(const SSL_HANDSHAKE *hs, uint16_t version);
++
+ // ssl_method_supports_version returns whether |method| supports |version|.
+ bool ssl_method_supports_version(const SSL_PROTOCOL_METHOD *method,
+                                  uint16_t version);
+@@ -219,6 +224,7 @@ BSSL_NAMESPACE_BEGIN
  // SSL_kPSK is only set for plain PSK, not ECDHE_PSK.
  #define SSL_kPSK 0x00000004u
  #define SSL_kGENERIC 0x00000008u
@@ -1091,7 +2179,7 @@ index 2bea8f6..d1e59e8 100644
  
  // Bits for |algorithm_auth| (server authentication).
  #define SSL_aRSA_SIGN 0x00000001u
-@@ -245,6 +246,7 @@ BSSL_NAMESPACE_BEGIN
+@@ -245,6 +251,7 @@ BSSL_NAMESPACE_BEGIN
  #define SSL_SHA256 0x00000002u
  // SSL_AEAD is set for all AEADs.
  #define SSL_AEAD 0x00000004u
@@ -1099,7 +2187,7 @@ index 2bea8f6..d1e59e8 100644
  
  // Bits for |algorithm_prf| (handshake digest).
  #define SSL_HANDSHAKE_MAC_DEFAULT 0x1
-@@ -913,7 +915,7 @@ struct NamedGroup {
+@@ -913,7 +920,7 @@ struct NamedGroup {
  Span<const NamedGroup> NamedGroups();
  
  // kNumNamedGroups is the number of supported groups.
@@ -1108,7 +2196,7 @@ index 2bea8f6..d1e59e8 100644
  
  // DefaultSupportedGroupIds returns the list of IDs for the default groups that
  // are supported when the caller hasn't explicitly configured supported groups.
-@@ -1114,6 +1116,13 @@ enum ssl_key_usage_t {
+@@ -1114,6 +1121,13 @@ enum ssl_key_usage_t {
  // includes |bit|. Otherwise it pushes to the error queue and returns false.
  bool ssl_cert_check_key_usage(const CBS *in, enum ssl_key_usage_t bit);
  
@@ -1122,7 +2210,7 @@ index 2bea8f6..d1e59e8 100644
  // ssl_cert_extract_issuer parses the DER-encoded, X.509 certificate in |in|
  // and extracts the issuer. On success it returns true and the DER encoded
  // issuer is in |out_dn|, otherwise it returns false.
-@@ -1664,7 +1673,8 @@ enum ssl_grease_index_t {
+@@ -1664,7 +1678,8 @@ enum ssl_grease_index_t {
    ssl_grease_version,
    ssl_grease_ticket_extension,
    ssl_grease_ech_config_id,
@@ -1132,7 +2220,7 @@ index 2bea8f6..d1e59e8 100644
  };
  
  enum tls12_server_hs_state_t {
-@@ -1904,6 +1914,15 @@ struct SSL_HANDSHAKE {
+@@ -1904,6 +1919,15 @@ struct SSL_HANDSHAKE {
    // delegated credentials.
    Array<uint16_t> peer_delegated_credential_sigalgs;
  
@@ -1148,7 +2236,52 @@ index 2bea8f6..d1e59e8 100644
    // peer_key is the peer's ECDH key for a TLS 1.2 client.
    Array<uint8_t> peer_key;
  
-@@ -3531,6 +3550,26 @@ struct SSL_CONFIG {
+@@ -2492,6 +2516,44 @@ bool ssl_client_cipher_list_contains_cipher(
+ uint16_t ssl_get_grease_value(const SSL_HANDSHAKE *hs,
+                               enum ssl_grease_index_t index);
+ 
++// ssl_is_grease_value returns whether |value| is a GREASE value (RFC 8701).
++bool ssl_is_grease_value(uint16_t value);
++
++
++// ClientHello lists.
++
++// kNumClientHelloLists is the number of |SSL_CLIENT_HELLO_*| lists.
++constexpr int kNumClientHelloLists = SSL_CLIENT_HELLO_EC_POINT_FORMATS + 1;
++
++// ssl_client_hello_list returns |hs|'s ClientHello list |list| set with
++// |SSL_CTX_set1_client_hello_list|, or nullptr if it is not set.
++const Array<uint16_t> *ssl_client_hello_list(const SSL_HANDSHAKE *hs,
++                                             int list);
++
++// ssl_client_hello_offers returns whether |hs|'s ClientHello list |list|, if
++// set, has |value|.
++bool ssl_client_hello_offers(const SSL_HANDSHAKE *hs, int list,
++                             uint16_t value);
++
++// ssl_add_client_hello_list writes |hs|'s ClientHello list |list|, which must
++// be set, to |out| as 16-bit values, each GREASE value as |grease|'s.
++bool ssl_add_client_hello_list(const SSL_HANDSHAKE *hs, CBB *out, int list,
++                               enum ssl_grease_index_t grease);
++
++// ssl_put_selection_error pushes |reason|, the error for a server selecting
++// |value| of |list| where |hs| rejects it, or, if |value| is not |supported|
++// and |hs|'s ClientHello list |list| offers it, |SSL_R_OFFER_ONLY_VALUE_SELECTED|
++// naming it.
++void ssl_put_selection_error(const SSL_HANDSHAKE *hs, int list, uint16_t value,
++                             bool supported, int reason);
++
++// ssl_leaf_key_offer_only, on a client whose server's leaf key failed to parse,
++// returns whether that key may be an offer-only selection: its type is not
++// implemented, and |hs|'s ClientHello signature_algorithms list offers
++// algorithms that are not configured. If so, it pushes
++// |SSL_R_OFFER_ONLY_VALUE_SELECTED|.
++bool ssl_leaf_key_offer_only(const SSL_HANDSHAKE *hs);
++
+ 
+ // Signature algorithms.
+ 
+@@ -3531,6 +3593,26 @@ struct SSL_CONFIG {
    // permute_extensions is whether to permute extensions when sending messages.
    bool permute_extensions : 1;
  
@@ -1175,13 +2308,17 @@ index 2bea8f6..d1e59e8 100644
    // aes_hw_override if set indicates we should override checking for aes
    // hardware support, and use the value in aes_hw_override_value instead.
    bool aes_hw_override : 1;
-@@ -4172,6 +4211,26 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
+@@ -4172,6 +4254,30 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
    // permute_extensions is whether to permute extensions when sending messages.
    bool permute_extensions : 1;
  
 +  // Wire-visible ClientHello extension and TLS 1.3 cipher order overrides.
 +  bssl::Array<uint16_t> extension_order;
 +  bssl::Array<uint16_t> tls13_cipher_order;
++
++  // client_hello_lists are the lists set with |SSL_CTX_set1_client_hello_list|.
++  std::optional<bssl::Array<uint16_t>>
++      client_hello_lists[bssl::kNumClientHelloLists];
 +
 +  // strict_extension_order, padding_length, renegotiation_scsv,
 +  // record_size_limit, delegated_credentials, grease_signature_algorithms,
@@ -1296,10 +2433,18 @@ index e480a3f..26965f0 100644
                                                       uint8_t *out_alert,
                                                       CBS *cbs) {
 diff --git a/ssl/ssl_cipher.cc b/ssl/ssl_cipher.cc
-index 1ef231c..45ff852 100644
+index 1ef231c..e747378 100644
 --- a/ssl/ssl_cipher.cc
 +++ b/ssl/ssl_cipher.cc
-@@ -51,6 +51,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
+@@ -19,6 +19,7 @@
+ #include <assert.h>
+ #include <string.h>
+ 
++#include <algorithm>
+ #include <iterator>
+ 
+ #include <openssl/err.h>
+@@ -51,6 +52,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
  
      // New AES ciphersuites
  
@@ -1318,7 +2463,7 @@ index 1ef231c..45ff852 100644
      // Cipher 2F
      {
          TLS1_TXT_RSA_WITH_AES_128_SHA,
-@@ -63,6 +75,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
+@@ -63,6 +76,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
          SSL_HANDSHAKE_MAC_DEFAULT,
      },
  
@@ -1337,7 +2482,7 @@ index 1ef231c..45ff852 100644
      // Cipher 35
      {
          TLS1_TXT_RSA_WITH_AES_256_SHA,
-@@ -75,6 +99,66 @@ static constexpr SSL_CIPHER kCiphers[] = {
+@@ -75,6 +100,66 @@ static constexpr SSL_CIPHER kCiphers[] = {
          SSL_HANDSHAKE_MAC_DEFAULT,
      },
  
@@ -1404,7 +2549,7 @@ index 1ef231c..45ff852 100644
      // PSK cipher suites.
  
      // Cipher 8C
-@@ -129,6 +213,30 @@ static constexpr SSL_CIPHER kCiphers[] = {
+@@ -129,6 +214,30 @@ static constexpr SSL_CIPHER kCiphers[] = {
  
      // TLS 1.3 suites.
  
@@ -1435,7 +2580,7 @@ index 1ef231c..45ff852 100644
      // Cipher 1301
      {
          TLS1_3_RFC_AES_128_GCM_SHA256,
-@@ -165,6 +273,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
+@@ -165,6 +274,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
          SSL_HANDSHAKE_MAC_SHA256,
      },
  
@@ -1454,7 +2599,7 @@ index 1ef231c..45ff852 100644
      // Cipher C009
      {
          TLS1_TXT_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
-@@ -189,6 +309,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
+@@ -189,6 +310,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
          SSL_HANDSHAKE_MAC_DEFAULT,
      },
  
@@ -1473,7 +2618,7 @@ index 1ef231c..45ff852 100644
      // Cipher C013
      {
          TLS1_TXT_ECDHE_RSA_WITH_AES_128_CBC_SHA,
-@@ -227,6 +359,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
+@@ -227,6 +360,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
          SSL_HANDSHAKE_MAC_SHA256,
      },
  
@@ -1492,7 +2637,7 @@ index 1ef231c..45ff852 100644
      // Cipher C027 (deprecated)
      {
          TLS1_TXT_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
-@@ -239,6 +383,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
+@@ -239,6 +384,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
          SSL_HANDSHAKE_MAC_SHA256,
      },
  
@@ -1511,7 +2656,7 @@ index 1ef231c..45ff852 100644
      // GCM based TLS v1.2 ciphersuites from RFC 5289
  
      // Cipher C02B
-@@ -341,6 +497,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
+@@ -341,6 +498,18 @@ static constexpr SSL_CIPHER kCiphers[] = {
          SSL_HANDSHAKE_MAC_SHA256,
      },
  
@@ -1530,7 +2675,7 @@ index 1ef231c..45ff852 100644
      // Cipher CCAB
      {
          TLS1_TXT_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256,
-@@ -523,11 +691,19 @@ bool ssl_cipher_get_evp_aead(const EVP_AEAD **out_aead,
+@@ -523,11 +692,19 @@ bool ssl_cipher_get_evp_aead(const EVP_AEAD **out_aead,
    } else if (cipher->algorithm_mac == SSL_SHA256) {
      if (cipher->algorithm_enc == SSL_AES128) {
        *out_aead = EVP_aead_aes_128_cbc_sha256_tls();
@@ -1550,7 +2695,7 @@ index 1ef231c..45ff852 100644
    } else {
      return false;
    }
-@@ -654,7 +830,11 @@ bool ssl_cipher_is_deprecated(const SSL_CIPHER *cipher) {
+@@ -654,7 +831,11 @@ bool ssl_cipher_is_deprecated(const SSL_CIPHER *cipher) {
    return cipher->protocol_id ==
               SSL_CIPHER_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256 ||
           cipher->protocol_id == SSL_CIPHER_ECDHE_RSA_WITH_AES_128_CBC_SHA256 ||
@@ -1563,7 +2708,41 @@ index 1ef231c..45ff852 100644
  }
  
  // ssl_cipher_apply_rule applies the rule type |rule| to ciphers matching its
-@@ -1046,6 +1226,21 @@ bool ssl_create_cipher_list(UniquePtr<SSLCipherPreferenceList> *out_cipher_list,
+@@ -1009,6 +1190,33 @@ static bool ssl_cipher_process_rulestr(const char *rule_str,
+   return true;
+ }
+ 
++// rule_names_only_tls13_ciphers returns whether |rule_str| names at least one
++// cipher and only TLS 1.3 ciphers.
++static bool rule_names_only_tls13_ciphers(const char *rule_str, bool strict) {
++  bool named = false;
++  for (const char *l = rule_str;; l++) {
++    const char *start = l;
++    while (*l != '\0' && !is_cipher_list_separator(*l, strict)) {
++      l++;
++    }
++    size_t len = l - start;
++    if (len != 0) {
++      if (std::none_of(std::begin(kCiphers), std::end(kCiphers),
++                       [&](const SSL_CIPHER &cipher) {
++                         return cipher.algorithm_mkey == SSL_kGENERIC &&
++                                (rule_equals(cipher.name, start, len) ||
++                                 rule_equals(cipher.standard_name, start, len));
++                       })) {
++        return false;
++      }
++      named = true;
++    }
++    if (*l == '\0') {
++      return named;
++    }
++  }
++}
++
+ bool ssl_create_cipher_list(UniquePtr<SSLCipherPreferenceList> *out_cipher_list,
+                             const bool has_aes_hw, const char *rule_str,
+                             bool strict) {
+@@ -1046,6 +1254,21 @@ bool ssl_create_cipher_list(UniquePtr<SSLCipherPreferenceList> *out_cipher_list,
        SSL_CIPHER_RSA_WITH_AES_256_CBC_SHA,
        SSL_CIPHER_PSK_WITH_AES_256_CBC_SHA,
        SSL_CIPHER_RSA_WITH_3DES_EDE_CBC_SHA,
@@ -1585,7 +2764,19 @@ index 1ef231c..45ff852 100644
    };
  
    // Set up a linked list of ciphers.
-@@ -1168,7 +1363,7 @@ bool ssl_cipher_uses_certificate_auth(const SSL_CIPHER *cipher) {
+@@ -1139,8 +1362,9 @@ bool ssl_create_cipher_list(UniquePtr<SSLCipherPreferenceList> *out_cipher_list,
+   *out_cipher_list = std::move(pref_list);
+ 
+   // Configuring an empty cipher list is an error but still updates the
+-  // output.
+-  if (sk_SSL_CIPHER_num((*out_cipher_list)->ciphers.get()) == 0) {
++  // output, unless the rule names only TLS 1.3 ciphers.
++  if (sk_SSL_CIPHER_num((*out_cipher_list)->ciphers.get()) == 0 &&
++      !rule_names_only_tls13_ciphers(rule_str, strict)) {
+     OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHER_MATCH);
+     return false;
+   }
+@@ -1168,7 +1392,7 @@ bool ssl_cipher_uses_certificate_auth(const SSL_CIPHER *cipher) {
  bool ssl_cipher_requires_server_key_exchange(const SSL_CIPHER *cipher) {
    // Ephemeral Diffie-Hellman key exchanges require a ServerKeyExchange. It is
    // optional or omitted in all others.
@@ -1594,7 +2785,7 @@ index 1ef231c..45ff852 100644
  }
  
  size_t ssl_cipher_get_record_split_len(const SSL_CIPHER *cipher) {
-@@ -1274,6 +1469,8 @@ int SSL_CIPHER_get_digest_nid(const SSL_CIPHER *cipher) {
+@@ -1274,6 +1498,8 @@ int SSL_CIPHER_get_digest_nid(const SSL_CIPHER *cipher) {
        return NID_sha1;
      case SSL_SHA256:
        return NID_sha256;
@@ -1603,7 +2794,7 @@ index 1ef231c..45ff852 100644
    }
    assert(0);
    return NID_undef;
-@@ -1289,6 +1486,8 @@ int SSL_CIPHER_get_kx_nid(const SSL_CIPHER *cipher) {
+@@ -1289,6 +1515,8 @@ int SSL_CIPHER_get_kx_nid(const SSL_CIPHER *cipher) {
        return NID_kx_psk;
      case SSL_kGENERIC:
        return NID_kx_any;
@@ -1612,7 +2803,7 @@ index 1ef231c..45ff852 100644
    }
    assert(0);
    return NID_undef;
-@@ -1398,6 +1597,10 @@ const char *SSL_CIPHER_get_kx_name(const SSL_CIPHER *cipher) {
+@@ -1398,6 +1626,10 @@ const char *SSL_CIPHER_get_kx_name(const SSL_CIPHER *cipher) {
        assert(cipher->algorithm_auth == SSL_aPSK);
        return "PSK";
  
@@ -1623,7 +2814,7 @@ index 1ef231c..45ff852 100644
      case SSL_kGENERIC:
        assert(cipher->algorithm_auth == SSL_aGENERIC);
        return "GENERIC";
-@@ -1468,6 +1671,10 @@ const char *SSL_CIPHER_description(const SSL_CIPHER *cipher, char *buf,
+@@ -1468,6 +1700,10 @@ const char *SSL_CIPHER_description(const SSL_CIPHER *cipher, char *buf,
        kx = "PSK";
        break;
  
@@ -1634,7 +2825,7 @@ index 1ef231c..45ff852 100644
      case SSL_kGENERIC:
        kx = "GENERIC";
        break;
-@@ -1538,6 +1745,10 @@ const char *SSL_CIPHER_description(const SSL_CIPHER *cipher, char *buf,
+@@ -1538,6 +1774,10 @@ const char *SSL_CIPHER_description(const SSL_CIPHER *cipher, char *buf,
        mac = "SHA256";
        break;
  
@@ -2020,7 +3211,7 @@ index d155b55..3d92363 100644
        return true;
      }
 diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
-index 89702ea..50e497a 100644
+index 89702ea..34adac2 100644
 --- a/ssl/ssl_lib.cc
 +++ b/ssl/ssl_lib.cc
 @@ -517,6 +517,15 @@ SSL *SSL_new(SSL_CTX *ctx) {
@@ -2050,7 +3241,38 @@ index 89702ea..50e497a 100644
        !ssl->config->accepted_peer_cert_types.TryCopyFrom(
            ctx->accepted_peer_cert_types) ||
        !ssl->config->available_client_cert_types.TryCopyFrom(
-@@ -3156,6 +3169,60 @@ void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled) {
+@@ -1851,24 +1864,17 @@ static bool check_group_ids(Span<const uint16_t> group_ids) {
+ }
+ 
+ // validate_key_shares returns whether the `requested_key_shares` are free of
+-// duplicates and are a (correctly ordered) subsequence of the supported
+-// `groups`.
++// duplicates and each one of the supported `groups`, in any order.
+ static bool validate_key_shares(Span<const uint16_t> requested_key_shares,
+                                 Span<const uint16_t> groups) {
+   if (!check_no_duplicates(requested_key_shares)) {
+     return false;
+   }
+-  if (requested_key_shares.size() > groups.size()) {
+-    return false;
+-  }
+-  size_t key_shares_idx = 0u, groups_idx = 0u;
+-  while (key_shares_idx < requested_key_shares.size() &&
+-         groups_idx < groups.size()) {
+-    if (requested_key_shares[key_shares_idx] == groups[groups_idx++]) {
+-      ++key_shares_idx;
+-    }
+-  }
+-  return key_shares_idx == requested_key_shares.size();
++  return std::all_of(requested_key_shares.begin(), requested_key_shares.end(),
++                     [&](uint16_t group) {
++                       return std::find(groups.begin(), groups.end(), group) !=
++                              groups.end();
++                     });
+ }
+ 
+ static void clear_key_shares_if_invalid(SSL_CONFIG *config) {
+@@ -3156,6 +3162,77 @@ void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled) {
    ctx->permute_extensions = !!enabled;
  }
  
@@ -2062,6 +3284,23 @@ index 89702ea..50e497a 100644
 +int SSL_CTX_set_tls13_cipher_order(SSL_CTX *ctx, const uint16_t *ids,
 +                                   size_t num_ids) {
 +  return ctx->tls13_cipher_order.CopyFrom(MakeConstSpan(ids, num_ids));
++}
++
++int SSL_CTX_set1_client_hello_list(SSL_CTX *ctx, int list,
++                                   const uint16_t *values, size_t num_values) {
++  Span<const uint16_t> span(values, num_values);
++  if (list < 0 || list >= kNumClientHelloLists ||
++      (list == SSL_CLIENT_HELLO_EC_POINT_FORMATS &&
++       std::any_of(span.begin(), span.end(),
++                   [](uint16_t value) { return value > 0xff; }))) {
++    OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_COMMAND);
++    return 0;
++  }
++  if (values == nullptr) {
++    ctx->client_hello_lists[list].reset();
++    return 1;
++  }
++  return ctx->client_hello_lists[list].emplace().CopyFrom(span);
 +}
 +
 +void SSL_CTX_set_strict_extension_order(SSL_CTX *ctx, int enabled) {
@@ -2164,8 +3403,25 @@ index b48becd..2007759 100644
 +  return parse_sigalgs_list(&parsed, sigalgs) &&
 +         set_sigalg_prefs(&ctx->delegated_credentials, parsed);
 +}
+diff --git a/ssl/ssl_versions.cc b/ssl/ssl_versions.cc
+index d472fe1..7299829 100644
+--- a/ssl/ssl_versions.cc
++++ b/ssl/ssl_versions.cc
+@@ -290,6 +290,12 @@ bool ssl_supports_version(const SSL_HANDSHAKE *hs, uint16_t version) {
+   return true;
+ }
+ 
++bool ssl_client_offers_version(const SSL_HANDSHAKE *hs, uint16_t version) {
++  return ssl_supports_version(hs, version) &&
++         ssl_client_hello_offers(hs, SSL_CLIENT_HELLO_SUPPORTED_VERSIONS,
++                                 version);
++}
++
+ bool ssl_add_supported_versions(const SSL_HANDSHAKE *hs, CBB *cbb,
+                                 uint16_t extra_min_version) {
+   for (uint16_t version : get_method_versions(hs->ssl->method)) {
 diff --git a/ssl/tls13_both.cc b/ssl/tls13_both.cc
-index fc7a11f..b246a7b 100644
+index fc7a11f..d9cbb71 100644
 --- a/ssl/tls13_both.cc
 +++ b/ssl/tls13_both.cc
 @@ -17,6 +17,7 @@
@@ -2287,7 +3543,20 @@ index fc7a11f..b246a7b 100644
    while (CBS_len(&certificate_list) > 0) {
      CBS certificate;  // For an RPK, this is the subjectPublicKeyInfo.
      CBS extensions;
-@@ -267,10 +363,15 @@ bool tls13_process_certificate(SSL_HANDSHAKE *hs, const SSLMessage &msg,
+@@ -222,8 +318,11 @@ bool tls13_process_certificate(SSL_HANDSHAKE *hs, const SSLMessage &msg,
+       }
+ 
+       if (!pkey) {
++        if (hs->peer_cert_type != TLSEXT_cert_type_x509 ||
++            !ssl_leaf_key_offer_only(hs)) {
++          OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
++        }
+         ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
+-        OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
+         return false;
+       }
+       // TLS 1.3 always uses certificate keys for signing thus the correct
+@@ -267,10 +366,15 @@ bool tls13_process_certificate(SSL_HANDSHAKE *hs, const SSLMessage &msg,
          TLSEXT_TYPE_trust_anchors,
          cert_extensions_allowed && !ssl->server && is_first_entry &&
              hs->config->requested_trust_anchors.has_value());
@@ -2306,7 +3575,7 @@ index fc7a11f..b246a7b 100644
        ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
        return false;
      }
-@@ -324,11 +425,24 @@ bool tls13_process_certificate(SSL_HANDSHAKE *hs, const SSLMessage &msg,
+@@ -324,11 +428,24 @@ bool tls13_process_certificate(SSL_HANDSHAKE *hs, const SSLMessage &msg,
        }
        hs->peer_matched_trust_anchor = true;
      }
@@ -2331,7 +3600,7 @@ index fc7a11f..b246a7b 100644
      if (hs->peer_cert_type == TLSEXT_cert_type_rpk) {
        hs->new_session->peer_raw_public_key = UpRef(hs->peer_pubkey);
      } else {
-@@ -381,8 +495,15 @@ bool tls13_process_certificate_verify(SSL_HANDSHAKE *hs,
+@@ -381,8 +498,15 @@ bool tls13_process_certificate_verify(SSL_HANDSHAKE *hs,
    }
  
    uint8_t alert = SSL_AD_DECODE_ERROR;
@@ -2350,7 +3619,7 @@ index fc7a11f..b246a7b 100644
      return false;
    }
 diff --git a/ssl/tls13_client.cc b/ssl/tls13_client.cc
-index c92bb27..89149d2 100644
+index c92bb27..3d90f9b 100644
 --- a/ssl/tls13_client.cc
 +++ b/ssl/tls13_client.cc
 @@ -191,8 +191,9 @@ static enum ssl_hs_wait_t do_read_hello_retry_request(SSL_HANDSHAKE *hs) {
@@ -2365,3 +3634,51 @@ index c92bb27..89149d2 100644
        !ssl->method->add_change_cipher_spec(ssl)) {
      return ssl_hs_error;
    }
+@@ -204,16 +205,25 @@ static enum ssl_hs_wait_t do_read_hello_retry_request(SSL_HANDSHAKE *hs) {
+     return ssl_hs_error;
+   }
+ 
+-  // The cipher suite must be one we offered. We currently offer all supported
+-  // TLS 1.3 ciphers unless policy controls limited it. So we check the version
+-  // and that it's ok per policy.
++  // The cipher suite must be one we offered. We offer all supported TLS 1.3
++  // ciphers that policy allows, or those of a configured order, and only those
++  // a ClientHello cipher suite list, if set, has. So we check the version,
++  // policy, order and list.
+   const SSL_CIPHER *cipher = SSL_get_cipher_by_value(server_hello.cipher_suite);
+-  if (cipher == nullptr ||
+-      SSL_CIPHER_get_min_version(cipher) > ssl_protocol_version(ssl) ||
+-      SSL_CIPHER_get_max_version(cipher) < ssl_protocol_version(ssl) ||
+-      !ssl_tls13_cipher_meets_policy(SSL_CIPHER_get_protocol_id(cipher),
+-                                     ssl->config->compliance_policy)) {
+-    OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_CIPHER_RETURNED);
++  const Span<const uint16_t> order = ssl->config->tls13_cipher_order;
++  const bool supported =
++      cipher != nullptr &&
++      SSL_CIPHER_get_min_version(cipher) <= ssl_protocol_version(ssl) &&
++      SSL_CIPHER_get_max_version(cipher) >= ssl_protocol_version(ssl) &&
++      ssl_tls13_cipher_meets_policy(SSL_CIPHER_get_protocol_id(cipher),
++                                    ssl->config->compliance_policy) &&
++      (order.empty() || std::find(order.begin(), order.end(),
++                                  server_hello.cipher_suite) != order.end());
++  if (!supported || !ssl_client_hello_offers(hs, SSL_CLIENT_HELLO_CIPHER_SUITES,
++                                             server_hello.cipher_suite)) {
++    ssl_put_selection_error(hs, SSL_CLIENT_HELLO_CIPHER_SUITES,
++                            server_hello.cipher_suite, supported,
++                            SSL_R_WRONG_CIPHER_RETURNED);
+     ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+     return ssl_hs_error;
+   }
+@@ -303,7 +313,11 @@ static enum ssl_hs_wait_t do_read_hello_retry_request(SSL_HANDSHAKE *hs) {
+     // The group must be supported.
+     if (!tls1_check_group_id(hs, group_id)) {
+       ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+-      OPENSSL_PUT_ERROR(SSL, SSL_R_WRONG_CURVE);
++      const Span<const uint16_t> groups = hs->config->supported_group_list;
++      ssl_put_selection_error(
++          hs, SSL_CLIENT_HELLO_SUPPORTED_GROUPS, group_id,
++          std::find(groups.begin(), groups.end(), group_id) != groups.end(),
++          SSL_R_WRONG_CURVE);
+       return ssl_hs_error;
+     }
+ 

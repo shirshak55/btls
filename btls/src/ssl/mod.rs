@@ -773,6 +773,27 @@ impl KeyShare {
     pub const FFDHE8192: KeyShare = KeyShare(ffi::SSL_GROUP_FFDHE8192 as _);
 }
 
+/// A ClientHello list [`SslContextBuilder::set_client_hello_list`] sets.
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct ClientHelloList(c_int);
+
+impl ClientHelloList {
+    pub const CIPHER_SUITES: Self = Self(ffi::SSL_CLIENT_HELLO_CIPHER_SUITES as _);
+
+    pub const SUPPORTED_GROUPS: Self = Self(ffi::SSL_CLIENT_HELLO_SUPPORTED_GROUPS as _);
+
+    pub const KEY_SHARES: Self = Self(ffi::SSL_CLIENT_HELLO_KEY_SHARES as _);
+
+    pub const SUPPORTED_VERSIONS: Self = Self(ffi::SSL_CLIENT_HELLO_SUPPORTED_VERSIONS as _);
+
+    pub const SIGNATURE_ALGORITHMS: Self = Self(ffi::SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS as _);
+
+    pub const SIGNATURE_ALGORITHMS_CERT: Self =
+        Self(ffi::SSL_CLIENT_HELLO_SIGNATURE_ALGORITHMS_CERT as _);
+
+    pub const EC_POINT_FORMATS: Self = Self(ffi::SSL_CLIENT_HELLO_EC_POINT_FORMATS as _);
+}
+
 /// A compliance policy.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct CompliancePolicy(ffi::ssl_compliance_policy_t);
@@ -2090,11 +2111,42 @@ impl SslContextBuilder {
     /// ClientHello's whole extension list: the listed extensions are sent in that order, each
     /// when its configuration calls for it, and no others. A GREASE value places a GREASE
     /// extension, [`ExtensionType::PADDING`] a padding extension of
-    /// [`Self::set_padding_length`] bytes, and [`ExtensionType::ENCRYPT_THEN_MAC`] an
-    /// encrypt_then_mac extension when no CBC cipher suite is offered.
+    /// [`Self::set_padding_length`] bytes, [`ExtensionType::SIGNATURE_ALGORITHMS_CERT`] the
+    /// [`ClientHelloList::SIGNATURE_ALGORITHMS_CERT`] list if set, and
+    /// [`ExtensionType::ENCRYPT_THEN_MAC`] an encrypt_then_mac extension, which BoringSSL does
+    /// not implement: a server accepting it for a CBC cipher suite fails the handshake as an
+    /// offer-only selection (see [`Self::set_client_hello_list`]).
     #[corresponds(SSL_CTX_set_strict_extension_order)]
     pub fn set_strict_extension_order(&mut self, enabled: bool) {
         unsafe { ffi::SSL_CTX_set_strict_extension_order(self.as_ptr(), enabled as _) }
+    }
+
+    /// Sets the values clients write in `list` of their initial ClientHello, verbatim and in
+    /// order, each GREASE value standing for the handshake's GREASE value for that list;
+    /// `None` restores the default list.
+    ///
+    /// The list may offer values BoringSSL does not implement or is not configured to
+    /// negotiate: only the configured values it offers are negotiated, and a server selecting
+    /// one of the others fails the handshake with `SSL_R_OFFER_ONLY_VALUE_SELECTED`, the
+    /// error's data naming the selection. [`ClientHelloList::KEY_SHARES`] must list configured
+    /// groups the supported_groups list offers, each at most once, and
+    /// [`ClientHelloList::EC_POINT_FORMATS`] values up to 255.
+    #[corresponds(SSL_CTX_set1_client_hello_list)]
+    pub fn set_client_hello_list(
+        &mut self,
+        list: ClientHelloList,
+        values: Option<&[u16]>,
+    ) -> Result<(), ErrorStack> {
+        let (ptr, len) = values.map_or((ptr::null(), 0), |values| (values.as_ptr(), values.len()));
+        unsafe {
+            cvt(ffi::SSL_CTX_set1_client_hello_list(
+                self.as_ptr(),
+                list.0,
+                ptr,
+                len,
+            ))
+            .map(|_| ())
+        }
     }
 
     /// Sets whether clients start their signature_algorithms extension with a GREASE value.
