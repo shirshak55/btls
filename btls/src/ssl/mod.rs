@@ -3935,6 +3935,14 @@ impl SslRef {
         unsafe { SSL_is_server(self.as_ptr()) != 0 }
     }
 
+    /// Returns the connection's shutdown state: whether a close_notify was sent to the peer,
+    /// or received from it.
+    #[corresponds(SSL_get_shutdown)]
+    #[must_use]
+    pub fn get_shutdown(&self) -> ShutdownState {
+        unsafe { ShutdownState::from_bits_retain(ffi::SSL_get_shutdown(self.as_ptr())) }
+    }
+
     /// Sets the extra data at the specified index.
     ///
     /// This can be used to provide data to callbacks registered with the context. Use the
