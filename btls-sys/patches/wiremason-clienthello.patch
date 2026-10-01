@@ -873,7 +873,7 @@ index d23c16d..9c287a4 100644
  OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_256_cbc_sha1_tls(void);
  OPENSSL_EXPORT const EVP_AEAD *EVP_aead_aes_256_cbc_sha1_tls_implicit_iv(void);
 diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
-index 055b3e0..8013bb3 100644
+index 055b3e0..0d56d09 100644
 --- a/include/openssl/ssl.h
 +++ b/include/openssl/ssl.h
 @@ -620,6 +620,14 @@ OPENSSL_EXPORT int SSL_version(const SSL *ssl);
@@ -933,7 +933,7 @@ index 055b3e0..8013bb3 100644
  
  // SSL_CTX_set1_group_ids sets the preferred groups for |ctx| to |group_ids|.
  // Each element of |group_ids| should be a unique one of the |SSL_GROUP_*|
-@@ -5508,6 +5537,122 @@ OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
+@@ -5508,6 +5537,135 @@ OPENSSL_EXPORT void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled);
  // permute extensions. For now, this is only implemented for the ClientHello.
  OPENSSL_EXPORT void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled);
  
@@ -1016,6 +1016,19 @@ index 055b3e0..8013bb3 100644
 +// which lets the server answer with a renegotiation_info extension.
 +OPENSSL_EXPORT void SSL_CTX_set_renegotiation_scsv(SSL_CTX *ctx, int enabled);
 +
++// SSL_CTX_set_post_handshake_auth configures whether TLS 1.3 clients on |ctx|
++// offer post-handshake authentication (RFC 8446, section 4.2.6) with an empty
++// post_handshake_auth extension, placed where a strict extension order lists
++// |TLSEXT_TYPE_post_handshake_auth|. Such a client answers each post-handshake
++// CertificateRequest with its configured certificate, or an empty Certificate if
++// none is configured, and keeps its handshake transcript hash for the life of
++// the connection to do so. It has no effect on servers, DTLS or TLS 1.2.
++OPENSSL_EXPORT void SSL_CTX_set_post_handshake_auth(SSL_CTX *ctx, int enabled);
++
++// SSL_set_post_handshake_auth acts like |SSL_CTX_set_post_handshake_auth| but
++// configures a single |SSL|.
++OPENSSL_EXPORT void SSL_set_post_handshake_auth(SSL *ssl, int enabled);
++
 +// SSL_CTX_set_record_size_limit configures clients on |ctx| to send the
 +// record_size_limit extension (RFC 8449) with |limit|, or none if zero. Records
 +// sent after the server answers with its own limit are no larger than it allows.
@@ -1056,7 +1069,7 @@ index 055b3e0..8013bb3 100644
  // SSL_set_permute_extensions configures whether sockets on |ssl| should
  // permute extensions. For now, this is only implemented for the ClientHello.
  OPENSSL_EXPORT void SSL_set_permute_extensions(SSL *ssl, int enabled);
-@@ -5891,7 +6036,6 @@ DEFINE_STACK_OF(SSL_COMP)
+@@ -5891,7 +6049,6 @@ DEFINE_STACK_OF(SSL_COMP)
  #define SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG 0
  #define SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG 0
  #define SSL_OP_NO_COMPRESSION 0
@@ -1064,7 +1077,7 @@ index 055b3e0..8013bb3 100644
  #define SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION 0
  #define SSL_OP_NO_SSLv2 0
  #define SSL_OP_NO_SSLv3 0
-@@ -7055,6 +7199,7 @@ BSSL_NAMESPACE_END
+@@ -7055,6 +7212,7 @@ BSSL_NAMESPACE_END
  #define SSL_R_UNSUPPORTED_CERTIFICATE 334
  #define SSL_R_MISSING_KEY 335
  #define SSL_R_INVALID_RAW_PUBLIC_KEY 336
@@ -1073,7 +1086,7 @@ index 055b3e0..8013bb3 100644
  #define SSL_R_SSLV3_ALERT_UNEXPECTED_MESSAGE 1010
  #define SSL_R_SSLV3_ALERT_BAD_RECORD_MAC 1020
 diff --git a/include/openssl/tls1.h b/include/openssl/tls1.h
-index c3e4098..ffb5c00 100644
+index c3e4098..f31eaae 100644
 --- a/include/openssl/tls1.h
 +++ b/include/openssl/tls1.h
 @@ -71,9 +71,15 @@ extern "C" {
@@ -1092,7 +1105,15 @@ index c3e4098..ffb5c00 100644
  // ExtensionType value from draft-ietf-quic-tls. Drafts 00 through 32 use
  // 0xffa5 which is part of the Private Use section of the registry, and it
  // collides with TLS-LTS and, based on scans, something else too (though this
-@@ -174,6 +180,7 @@ extern "C" {
+@@ -104,6 +110,7 @@ extern "C" {
+ #define TLSEXT_TYPE_cookie 44
+ #define TLSEXT_TYPE_psk_key_exchange_modes 45
+ #define TLSEXT_TYPE_certificate_authorities 47
++#define TLSEXT_TYPE_post_handshake_auth 49
+ #define TLSEXT_TYPE_signature_algorithms_cert 50
+ #define TLSEXT_TYPE_key_share 51
+ 
+@@ -174,6 +181,7 @@ extern "C" {
  // From https://www.rfc-editor.org/rfc/rfc8879.html#section-3
  #define TLSEXT_cert_compression_zlib 1
  #define TLSEXT_cert_compression_brotli 2
@@ -1148,7 +1169,7 @@ index e288f3c..214a4d6 100644
        !CBB_add_u16_length_prefixed(cbb.get(), &enc_cbb) ||
        !CBB_add_bytes(&enc_cbb, enc, sizeof(enc)) ||
 diff --git a/ssl/extensions.cc b/ssl/extensions.cc
-index db1a291..e922b76 100644
+index db1a291..66b95ff 100644
 --- a/ssl/extensions.cc
 +++ b/ssl/extensions.cc
 @@ -115,6 +115,73 @@ static bool is_post_quantum_group(uint16_t id) {
@@ -1682,10 +1703,22 @@ index db1a291..e922b76 100644
    if (!hs->config->permute_extensions) {
      return true;
    }
-@@ -4344,6 +4652,112 @@ static bool add_padding_extension(CBB *cbb, uint16_t ext, size_t len) {
+@@ -4344,6 +4652,131 @@ static bool add_padding_extension(CBB *cbb, uint16_t ext, size_t len) {
    return CBB_flush(cbb);
  }
  
++// ssl_add_post_handshake_auth writes an empty post_handshake_auth extension
++// (RFC 8446, section 4.2.6) to |out| if |hs| offers it, which a TLS 1.3 client
++// configured with |SSL_CTX_set_post_handshake_auth| does.
++static bool ssl_add_post_handshake_auth(const SSL_HANDSHAKE *hs, CBB *out) {
++  if (!hs->config->post_handshake_auth || hs->max_version < TLS1_3_VERSION ||
++      SSL_is_dtls(hs->ssl)) {
++    return true;
++  }
++  return CBB_add_u16(out, TLSEXT_TYPE_post_handshake_auth) &&
++         CBB_add_u16(out, 0 /* length */) && CBB_flush(out);
++}
++
 +// ssl_expect_renegotiation_info lets the server answer a
 +// TLS_EMPTY_RENEGOTIATION_INFO_SCSV with a renegotiation_info extension.
 +static void ssl_expect_renegotiation_info(SSL_HANDSHAKE *hs) {
@@ -1704,7 +1737,7 @@ index db1a291..e922b76 100644
 +    ssl_client_hello_type_t type) {
 +  SSL *const ssl = hs->ssl;
 +  size_t greased = 0;
-+  bool padded = false, etm = false, sigalgs_cert = false;
++  bool padded = false, etm = false, sigalgs_cert = false, pha = false;
 +  for (uint16_t id : hs->config->extension_order) {
 +    if ((id & 0x0f0f) == 0x0a0a && (id >> 8) == (id & 0xff)) {
 +      // There are two GREASE extensions: an empty one, then a one-byte one.
@@ -1734,6 +1767,13 @@ index db1a291..e922b76 100644
 +        return false;
 +      }
 +      etm = true;
++      continue;
++    }
++    if (id == TLSEXT_TYPE_post_handshake_auth) {
++      if (!pha && !ssl_add_post_handshake_auth(hs, extensions)) {
++        return false;
++      }
++      pha = true;
 +      continue;
 +    }
 +    if (id == TLSEXT_TYPE_signature_algorithms_cert) {
@@ -1795,7 +1835,18 @@ index db1a291..e922b76 100644
  static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
                                               CBB *out_encoded) {
    // When writing ClientHelloInner, we construct the real and encoded
-@@ -4479,6 +4893,10 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4402,6 +4835,10 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
+     }
+   }
+ 
++  if (!ssl_add_post_handshake_auth(hs, &extensions)) {
++    return false;
++  }
++
+   if (ssl->ctx->grease_enabled) {
+     // Add a fake non-empty extension. See RFC 8701. This always matches
+     // |ssl_add_clienthello_tlsext|, so compress it.
+@@ -4479,6 +4916,10 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
    // important to reset this value.
    hs->extensions.sent = 0;
  
@@ -1806,7 +1857,24 @@ index db1a291..e922b76 100644
    // Add a fake empty extension. See RFC 8701.
    if (ssl->ctx->grease_enabled &&
        !add_padding_extension(
-@@ -4515,6 +4933,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4507,6 +4948,16 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+     last_was_empty = (bytes_written == 4);
+   }
+ 
++  {
++    const size_t len_before = CBB_len(&extensions);
++    if (!ssl_add_post_handshake_auth(hs, &extensions)) {
++      return false;
++    }
++    if (CBB_len(&extensions) != len_before) {
++      last_was_empty = true;
++    }
++  }
++
+   if (ssl->ctx->grease_enabled) {
+     // Add a fake non-empty extension. See RFC 8701.
+     if (!add_padding_extension(
+@@ -4515,6 +4966,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
      }
      last_was_empty = false;
    }
@@ -1814,7 +1882,7 @@ index db1a291..e922b76 100644
  
    // In cleartext ClientHellos, we add the padding extension to work around
    // bugs. We also apply this padding to ClientHelloOuter, to keep the wire
-@@ -4710,6 +5129,21 @@ static bool ssl_scan_serverhello_tlsext(SSL_HANDSHAKE *hs, const CBS *cbs,
+@@ -4710,6 +5162,21 @@ static bool ssl_scan_serverhello_tlsext(SSL_HANDSHAKE *hs, const CBS *cbs,
        return false;
      }
  
@@ -2156,7 +2224,7 @@ index 7ab6d2c..f589a6d 100644
      CBB child;
      if (!CBB_add_u8_length_prefixed(&body, &child)) {
 diff --git a/ssl/internal.h b/ssl/internal.h
-index 2bea8f6..60588a3 100644
+index 2bea8f6..b321318 100644
 --- a/ssl/internal.h
 +++ b/ssl/internal.h
 @@ -165,6 +165,11 @@ bool ssl_get_version_range(const SSL_HANDSHAKE *hs, uint16_t *out_min_version,
@@ -2187,7 +2255,18 @@ index 2bea8f6..60588a3 100644
  
  // Bits for |algorithm_prf| (handshake digest).
  #define SSL_HANDSHAKE_MAC_DEFAULT 0x1
-@@ -913,7 +920,7 @@ struct NamedGroup {
+@@ -422,6 +429,10 @@ class SSLTranscript {
+   // enabled. It returns true on success and false on failure.
+   bool Update(Span<const uint8_t> in);
+ 
++  // CopyFrom makes this transcript a copy of |other|'s handshake hash, without
++  // its handshake buffer. It returns true on success and false on failure.
++  bool CopyFrom(const SSLTranscript &other);
++
+   // GetHash writes the handshake hash to |out| which must have room for at
+   // least |DigestLen| bytes. On success, it returns true and sets |*out_len| to
+   // the number of bytes written. Otherwise, it returns false.
+@@ -913,7 +924,7 @@ struct NamedGroup {
  Span<const NamedGroup> NamedGroups();
  
  // kNumNamedGroups is the number of supported groups.
@@ -2196,7 +2275,7 @@ index 2bea8f6..60588a3 100644
  
  // DefaultSupportedGroupIds returns the list of IDs for the default groups that
  // are supported when the caller hasn't explicitly configured supported groups.
-@@ -1114,6 +1121,13 @@ enum ssl_key_usage_t {
+@@ -1114,6 +1125,13 @@ enum ssl_key_usage_t {
  // includes |bit|. Otherwise it pushes to the error queue and returns false.
  bool ssl_cert_check_key_usage(const CBS *in, enum ssl_key_usage_t bit);
  
@@ -2210,7 +2289,7 @@ index 2bea8f6..60588a3 100644
  // ssl_cert_extract_issuer parses the DER-encoded, X.509 certificate in |in|
  // and extracts the issuer. On success it returns true and the DER encoded
  // issuer is in |out_dn|, otherwise it returns false.
-@@ -1664,7 +1678,8 @@ enum ssl_grease_index_t {
+@@ -1664,7 +1682,8 @@ enum ssl_grease_index_t {
    ssl_grease_version,
    ssl_grease_ticket_extension,
    ssl_grease_ech_config_id,
@@ -2220,7 +2299,7 @@ index 2bea8f6..60588a3 100644
  };
  
  enum tls12_server_hs_state_t {
-@@ -1904,6 +1919,15 @@ struct SSL_HANDSHAKE {
+@@ -1904,6 +1923,15 @@ struct SSL_HANDSHAKE {
    // delegated credentials.
    Array<uint16_t> peer_delegated_credential_sigalgs;
  
@@ -2236,7 +2315,32 @@ index 2bea8f6..60588a3 100644
    // peer_key is the peer's ECDH key for a TLS 1.2 client.
    Array<uint8_t> peer_key;
  
-@@ -2492,6 +2516,44 @@ bool ssl_client_cipher_list_contains_cipher(
+@@ -2013,6 +2041,11 @@ struct SSL_HANDSHAKE {
+   // cert_request is true if a client certificate was requested.
+   bool cert_request : 1;
+ 
++  // certificate_request_context is the context of the post-handshake
++  // CertificateRequest a client is answering (RFC 8446, section 4.6.2). It is
++  // empty in the handshake.
++  Array<uint8_t> certificate_request_context;
++
+   // certificate_status_expected is true if OCSP stapling was negotiated and the
+   // server is expected to send a CertificateStatus message. (This is used on
+   // both the client and server sides.)
+@@ -2195,6 +2228,12 @@ bool tls13_add_key_update(SSL *ssl, int request_type);
+ // success and false on failure.
+ bool tls13_post_handshake(SSL *ssl, const SSLMessage &msg);
+ 
++// tls13_post_handshake_auth answers a post-handshake CertificateRequest |msg|
++// (RFC 8446, section 4.6.2) on a client that offered post_handshake_auth,
++// queueing a Certificate, CertificateVerify if a credential is selected, and
++// Finished. It returns true on success and false on failure.
++bool tls13_post_handshake_auth(SSL *ssl, const SSLMessage &msg);
++
+ bool tls13_process_certificate(SSL_HANDSHAKE *hs, const SSLMessage &msg,
+                                bool allow_anonymous);
+ bool tls13_process_certificate_verify(SSL_HANDSHAKE *hs, const SSLMessage &msg);
+@@ -2492,6 +2531,44 @@ bool ssl_client_cipher_list_contains_cipher(
  uint16_t ssl_get_grease_value(const SSL_HANDSHAKE *hs,
                                enum ssl_grease_index_t index);
  
@@ -2281,7 +2385,32 @@ index 2bea8f6..60588a3 100644
  
  // Signature algorithms.
  
-@@ -3531,6 +3593,26 @@ struct SSL_CONFIG {
+@@ -2912,6 +2989,10 @@ struct SSL3_STATE {
+   // unACKed KeyUpdate.
+   bool key_update_pending : 1;
+ 
++  // post_handshake_auth_pending is true if a client has queued a post-handshake
++  // authentication flight that has not yet been written to the wire.
++  bool post_handshake_auth_pending : 1;
++
+   // early_data_accepted is true if early data was accepted by the server.
+   bool early_data_accepted : 1;
+ 
+@@ -2975,6 +3056,13 @@ struct SSL3_STATE {
+   InplaceVector<uint8_t, SSL_MAX_MD_SIZE> read_traffic_secret;
+   InplaceVector<uint8_t, SSL_MAX_MD_SIZE> exporter_secret;
+ 
++  // post_handshake_auth_transcript, if set, is the handshake transcript hash
++  // through the client Finished of a TLS 1.3 client that offered
++  // post_handshake_auth: the context of every post-handshake CertificateRequest
++  // (RFC 8446, section 4.6.2). Its handshake buffer is freed, so it costs one
++  // hash context for the life of the connection.
++  std::optional<SSLTranscript> post_handshake_auth_transcript;
++
+   // Connection binding to prevent renegotiation attacks
+   InplaceVector<uint8_t, 12> previous_client_finished;
+   InplaceVector<uint8_t, 12> previous_server_finished;
+@@ -3531,6 +3619,27 @@ struct SSL_CONFIG {
    // permute_extensions is whether to permute extensions when sending messages.
    bool permute_extensions : 1;
  
@@ -2298,6 +2427,7 @@ index 2bea8f6..60588a3 100644
 +  bool grease_signature_algorithms = false;
 +  uint16_t padding_length = 0;
 +  bool renegotiation_scsv = false;
++  bool post_handshake_auth = false;
 +  uint16_t record_size_limit = 0;
 +  Array<uint16_t> delegated_credentials;
 +  int session_id_length = -1;
@@ -2308,7 +2438,7 @@ index 2bea8f6..60588a3 100644
    // aes_hw_override if set indicates we should override checking for aes
    // hardware support, and use the value in aes_hw_override_value instead.
    bool aes_hw_override : 1;
-@@ -4172,6 +4254,30 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
+@@ -4172,6 +4281,31 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
    // permute_extensions is whether to permute extensions when sending messages.
    bool permute_extensions : 1;
  
@@ -2329,6 +2459,7 @@ index 2bea8f6..60588a3 100644
 +  bool grease_signature_algorithms = false;
 +  uint16_t padding_length = 0;
 +  bool renegotiation_scsv = false;
++  bool post_handshake_auth = false;
 +  uint16_t record_size_limit = 0;
 +  bssl::Array<uint16_t> delegated_credentials;
 +  int session_id_length = -1;
@@ -2339,6 +2470,18 @@ index 2bea8f6..60588a3 100644
    // allow_unknown_alpn_protos is whether the client allows unsolicited ALPN
    // protocols from the peer.
    bool allow_unknown_alpn_protos : 1;
+diff --git a/ssl/s3_lib.cc b/ssl/s3_lib.cc
+index 6f76f76..37e2f8b 100644
+--- a/ssl/s3_lib.cc
++++ b/ssl/s3_lib.cc
+@@ -41,6 +41,7 @@ SSL3_STATE::SSL3_STATE()
+       send_connection_binding(false),
+       channel_id_valid(false),
+       key_update_pending(false),
++      post_handshake_auth_pending(false),
+       early_data_accepted(false),
+       alert_dispatch(false),
+       renegotiate_pending(false),
 diff --git a/ssl/ssl_cert.cc b/ssl/ssl_cert.cc
 index e480a3f..26965f0 100644
 --- a/ssl/ssl_cert.cc
@@ -3211,10 +3354,22 @@ index d155b55..3d92363 100644
        return true;
      }
 diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
-index 89702ea..34adac2 100644
+index 89702ea..7d694a8 100644
 --- a/ssl/ssl_lib.cc
 +++ b/ssl/ssl_lib.cc
-@@ -517,6 +517,15 @@ SSL *SSL_new(SSL_CTX *ctx) {
+@@ -302,9 +302,11 @@ static bool ssl_can_renegotiate(const SSL *ssl) {
+ }
+ 
+ static void ssl_maybe_shed_handshake_config(SSL *ssl) {
++  // A post-handshake CertificateRequest needs the certificate configuration.
+   if (ssl->s3->hs != nullptr ||               //
+       ssl->config == nullptr ||               //
+       !ssl->config->shed_handshake_config ||  //
++      ssl->s3->post_handshake_auth_transcript.has_value() ||
+       ssl_can_renegotiate(ssl)) {
+     return;
+   }
+@@ -517,6 +519,16 @@ SSL *SSL_new(SSL_CTX *ctx) {
    ssl->config->retain_only_sha256_of_client_certs =
        ctx->retain_only_sha256_of_client_certs;
    ssl->config->permute_extensions = ctx->permute_extensions;
@@ -3222,6 +3377,7 @@ index 89702ea..34adac2 100644
 +  ssl->config->grease_signature_algorithms = ctx->grease_signature_algorithms;
 +  ssl->config->padding_length = ctx->padding_length;
 +  ssl->config->renegotiation_scsv = ctx->renegotiation_scsv;
++  ssl->config->post_handshake_auth = ctx->post_handshake_auth;
 +  ssl->config->record_size_limit = ctx->record_size_limit;
 +  ssl->config->session_id_length = ctx->session_id_length;
 +  ssl->config->ech_grease_payload_length = ctx->ech_grease_payload_length;
@@ -3230,7 +3386,7 @@ index 89702ea..34adac2 100644
    ssl->config->aes_hw_override = ctx->aes_hw_override;
    ssl->config->aes_hw_override_value = ctx->aes_hw_override_value;
    ssl->config->compliance_policy = ctx->compliance_policy;
-@@ -527,6 +536,10 @@ SSL *SSL_new(SSL_CTX *ctx) {
+@@ -527,6 +539,10 @@ SSL *SSL_new(SSL_CTX *ctx) {
        !ssl->config->alpn_client_proto_list.CopyFrom(
            ctx->alpn_client_proto_list) ||
        !ssl->config->verify_sigalgs.CopyFrom(ctx->verify_sigalgs) ||
@@ -3241,7 +3397,25 @@ index 89702ea..34adac2 100644
        !ssl->config->accepted_peer_cert_types.TryCopyFrom(
            ctx->accepted_peer_cert_types) ||
        !ssl->config->available_client_cert_types.TryCopyFrom(
-@@ -1851,24 +1864,17 @@ static bool check_group_ids(Span<const uint16_t> group_ids) {
+@@ -849,13 +865,14 @@ static int ssl_read_impl(SSL *ssl) {
+       return -1;
+     }
+ 
+-    // If a read triggered a DTLS ACK or retransmit, resolve that before reading
+-    // more.
+-    if (SSL_is_dtls(ssl)) {
++    // If a read triggered a DTLS ACK or retransmit, or a post-handshake
++    // authentication flight, resolve that before reading more.
++    if (SSL_is_dtls(ssl) || ssl->s3->post_handshake_auth_pending) {
+       int ret = ssl->method->flush(ssl);
+       if (ret <= 0) {
+         return ret;
+       }
++      ssl->s3->post_handshake_auth_pending = false;
+     }
+ 
+     // Complete the current handshake, if any. False Start will cause
+@@ -1851,24 +1868,17 @@ static bool check_group_ids(Span<const uint16_t> group_ids) {
  }
  
  // validate_key_shares returns whether the `requested_key_shares` are free of
@@ -3272,7 +3446,7 @@ index 89702ea..34adac2 100644
  }
  
  static void clear_key_shares_if_invalid(SSL_CONFIG *config) {
-@@ -3156,6 +3162,77 @@ void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled) {
+@@ -3156,6 +3166,88 @@ void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled) {
    ctx->permute_extensions = !!enabled;
  }
  
@@ -3317,6 +3491,17 @@ index 89702ea..34adac2 100644
 +
 +void SSL_CTX_set_renegotiation_scsv(SSL_CTX *ctx, int enabled) {
 +  ctx->renegotiation_scsv = !!enabled;
++}
++
++void SSL_CTX_set_post_handshake_auth(SSL_CTX *ctx, int enabled) {
++  ctx->post_handshake_auth = !!enabled;
++}
++
++void SSL_set_post_handshake_auth(SSL *ssl, int enabled) {
++  if (!ssl->config) {
++    return;
++  }
++  ssl->config->post_handshake_auth = !!enabled;
 +}
 +
 +void SSL_CTX_set_record_size_limit(SSL_CTX *ctx, uint16_t limit) {
@@ -3403,6 +3588,24 @@ index b48becd..2007759 100644
 +  return parse_sigalgs_list(&parsed, sigalgs) &&
 +         set_sigalg_prefs(&ctx->delegated_credentials, parsed);
 +}
+diff --git a/ssl/ssl_transcript.cc b/ssl/ssl_transcript.cc
+index 101da70..101ebc9 100644
+--- a/ssl/ssl_transcript.cc
++++ b/ssl/ssl_transcript.cc
+@@ -112,6 +112,13 @@ bool SSLTranscript::HashBuffer(EVP_MD_CTX *ctx, const EVP_MD *digest) const {
+ 
+ void SSLTranscript::FreeBuffer() { buffer_.reset(); }
+ 
++bool SSLTranscript::CopyFrom(const SSLTranscript &other) {
++  buffer_.reset();
++  is_dtls_ = other.is_dtls_;
++  version_ = other.version_;
++  return EVP_MD_CTX_copy_ex(hash_.get(), other.hash_.get());
++}
++
+ size_t SSLTranscript::DigestLen() const { return EVP_MD_size(Digest()); }
+ 
+ const EVP_MD *SSLTranscript::Digest() const {
 diff --git a/ssl/ssl_versions.cc b/ssl/ssl_versions.cc
 index d472fe1..7299829 100644
 --- a/ssl/ssl_versions.cc
@@ -3421,7 +3624,7 @@ index d472fe1..7299829 100644
                                  uint16_t extra_min_version) {
    for (uint16_t version : get_method_versions(hs->ssl->method)) {
 diff --git a/ssl/tls13_both.cc b/ssl/tls13_both.cc
-index fc7a11f..d9cbb71 100644
+index fc7a11f..957ad6e 100644
 --- a/ssl/tls13_both.cc
 +++ b/ssl/tls13_both.cc
 @@ -17,6 +17,7 @@
@@ -3618,8 +3821,32 @@ index fc7a11f..d9cbb71 100644
      ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
      return false;
    }
+@@ -455,8 +579,10 @@ bool tls13_add_certificate(SSL_HANDSHAKE *hs) {
+     }
+   }
+ 
+-  if (  // The request context is always empty in the handshake.
+-      !CBB_add_u8(body, 0) ||
++  CBB context;
++  if (!CBB_add_u8_length_prefixed(body, &context) ||
++      !CBB_add_bytes(&context, hs->certificate_request_context.data(),
++                     hs->certificate_request_context.size()) ||
+       !CBB_add_u24_length_prefixed(body, &certificate_list)) {
+     return false;
+   }
+@@ -741,6 +867,10 @@ bool tls13_post_handshake(SSL *ssl, const SSLMessage &msg) {
+     return tls13_process_new_session_ticket(ssl, msg);
+   }
+ 
++  if (msg.type == SSL3_MT_CERTIFICATE_REQUEST && !ssl->server) {
++    return tls13_post_handshake_auth(ssl, msg);
++  }
++
+   if (msg.type == SSL3_MT_KEY_UPDATE) {
+     ssl->s3->key_update_count++;
+     if (SSL_is_quic(ssl) || ssl->s3->key_update_count > kMaxKeyUpdates) {
 diff --git a/ssl/tls13_client.cc b/ssl/tls13_client.cc
-index c92bb27..3d90f9b 100644
+index c92bb27..2c7850a 100644
 --- a/ssl/tls13_client.cc
 +++ b/ssl/tls13_client.cc
 @@ -191,8 +191,9 @@ static enum ssl_hs_wait_t do_read_hello_retry_request(SSL_HANDSHAKE *hs) {
@@ -3682,3 +3909,279 @@ index c92bb27..3d90f9b 100644
        return ssl_hs_error;
      }
  
+@@ -743,37 +757,20 @@ static enum ssl_hs_wait_t do_read_encrypted_extensions(SSL_HANDSHAKE *hs) {
+   return ssl_hs_ok;
+ }
+ 
+-static enum ssl_hs_wait_t do_read_certificate_request(SSL_HANDSHAKE *hs) {
++// tls13_process_certificate_request processes |msg| as a CertificateRequest,
++// whose certificate_request_context is empty in the handshake and non-empty
++// after it (RFC 8446, sections 4.3.2 and 4.6.2), and hashes it.
++static bool tls13_process_certificate_request(SSL_HANDSHAKE *hs,
++                                              const SSLMessage &msg,
++                                              bool post_handshake) {
+   SSL *const ssl = hs->ssl;
+-  // CertificateRequest may only be sent in certificate-based handshakes.
+-  if (!using_certificate(hs)) {
+-    if (ssl->s3->session_reused && ssl->ctx->reverify_on_resume &&
+-        !ssl->s3->early_data_accepted) {
+-      hs->tls13_state = state_server_certificate_reverify;
+-      return ssl_hs_ok;
+-    }
+-    hs->tls13_state = state_read_server_finished;
+-    return ssl_hs_ok;
+-  }
+-
+-  SSLMessage msg;
+-  if (!ssl->method->get_message(ssl, &msg)) {
+-    return ssl_hs_read_message;
+-  }
+-
+-  // CertificateRequest is optional.
+-  if (msg.type != SSL3_MT_CERTIFICATE_REQUEST) {
+-    hs->tls13_state = state_read_server_certificate;
+-    return ssl_hs_ok;
+-  }
+-
+   SSLExtension sigalgs(TLSEXT_TYPE_signature_algorithms),
+       ca(TLSEXT_TYPE_certificate_authorities);
+   CBS body = msg.body, context, extensions, supported_signature_algorithms;
+   uint8_t alert = SSL_AD_DECODE_ERROR;
+   if (!CBS_get_u8_length_prefixed(&body, &context) ||
+-      // The request context is always empty during the handshake.
+-      CBS_len(&context) != 0 ||
++      (CBS_len(&context) != 0) != post_handshake ||
++      !hs->certificate_request_context.CopyFrom(context) ||
+       !CBS_get_u16_length_prefixed(&body, &extensions) ||  //
+       CBS_len(&body) != 0 ||
+       !ssl_parse_extensions(&extensions, &alert, {&sigalgs, &ca},
+@@ -784,7 +781,7 @@ static enum ssl_hs_wait_t do_read_certificate_request(SSL_HANDSHAKE *hs) {
+       !tls1_parse_peer_sigalgs(hs, &supported_signature_algorithms)) {
+     ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
+     OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
+-    return ssl_hs_error;
++    return false;
+   }
+ 
+   if (ca.present) {
+@@ -793,20 +790,46 @@ static enum ssl_hs_wait_t do_read_certificate_request(SSL_HANDSHAKE *hs) {
+         CBS_len(&ca.data) != 0) {
+       OPENSSL_PUT_ERROR(SSL, SSL_R_ERROR_PARSING_EXTENSION);
+       ssl_send_alert(ssl, SSL3_AL_FATAL, alert);
+-      return ssl_hs_error;
++      return false;
+     }
+   } else {
+     hs->ca_names.reset(sk_CRYPTO_BUFFER_new_null());
+     if (!hs->ca_names) {
+       ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
+-      return ssl_hs_error;
++      return false;
+     }
+   }
+ 
+   hs->cert_request = true;
+   ssl->ctx->x509_method->hs_flush_cached_ca_names(hs);
++  return ssl_hash_message(hs, msg);
++}
+ 
+-  if (!ssl_hash_message(hs, msg)) {
++static enum ssl_hs_wait_t do_read_certificate_request(SSL_HANDSHAKE *hs) {
++  SSL *const ssl = hs->ssl;
++  // CertificateRequest may only be sent in certificate-based handshakes.
++  if (!using_certificate(hs)) {
++    if (ssl->s3->session_reused && ssl->ctx->reverify_on_resume &&
++        !ssl->s3->early_data_accepted) {
++      hs->tls13_state = state_server_certificate_reverify;
++      return ssl_hs_ok;
++    }
++    hs->tls13_state = state_read_server_finished;
++    return ssl_hs_ok;
++  }
++
++  SSLMessage msg;
++  if (!ssl->method->get_message(ssl, &msg)) {
++    return ssl_hs_read_message;
++  }
++
++  // CertificateRequest is optional.
++  if (msg.type != SSL3_MT_CERTIFICATE_REQUEST) {
++    hs->tls13_state = state_read_server_certificate;
++    return ssl_hs_ok;
++  }
++
++  if (!tls13_process_certificate_request(hs, msg, /*post_handshake=*/false)) {
+     return ssl_hs_error;
+   }
+ 
+@@ -983,36 +1006,14 @@ static bool check_credential(SSL_HANDSHAKE *hs, const SSLCredential *cred,
+   return ssl_credential_matches_requested_issuers(hs, cred);
+ }
+ 
+-static enum ssl_hs_wait_t do_send_client_certificate(SSL_HANDSHAKE *hs) {
++// tls13_select_client_credential sets |hs->credential| to the configured
++// credential, if any, that answers the peer's CertificateRequest. It returns
++// true on success and false on error.
++static bool tls13_select_client_credential(SSL_HANDSHAKE *hs) {
+   SSL *const ssl = hs->ssl;
+-
+-  // The peer didn't request a certificate.
+-  if (!hs->cert_request) {
+-    hs->tls13_state = state_complete_second_flight;
+-    return ssl_hs_ok;
+-  }
+-
+-  if (ssl->s3->ech_status == ssl_ech_rejected) {
+-    // Do not send client certificates on ECH reject. We have not authenticated
+-    // the server for the name that can learn the certificate.
+-    SSL_certs_clear(ssl);
+-  } else if (hs->config->cert->cert_cb != nullptr) {
+-    // Call cert_cb to update the certificate.
+-    int rv = hs->config->cert->cert_cb(ssl, hs->config->cert->cert_cb_arg);
+-    if (rv == 0) {
+-      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
+-      OPENSSL_PUT_ERROR(SSL, SSL_R_CERT_CB_ERROR);
+-      return ssl_hs_error;
+-    }
+-    if (rv < 0) {
+-      hs->tls13_state = state_send_client_certificate;
+-      return ssl_hs_x509_lookup;
+-    }
+-  }
+-
+   Array<SSLCredential *> creds;
+   if (!ssl_get_full_credential_list(hs, &creds)) {
+-    return ssl_hs_error;
++    return false;
+   }
+ 
+   // Select the credential, if any, to use.
+@@ -1041,10 +1042,40 @@ static enum ssl_hs_wait_t do_send_client_certificate(SSL_HANDSHAKE *hs) {
+     // The error from the last attempt is in the error queue.
+     assert(ERR_peek_error() != 0);
+     ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_HANDSHAKE_FAILURE);
+-    return ssl_hs_error;
++    return false;
++  }
++  return true;
++}
++
++static enum ssl_hs_wait_t do_send_client_certificate(SSL_HANDSHAKE *hs) {
++  SSL *const ssl = hs->ssl;
++
++  // The peer didn't request a certificate.
++  if (!hs->cert_request) {
++    hs->tls13_state = state_complete_second_flight;
++    return ssl_hs_ok;
++  }
++
++  if (ssl->s3->ech_status == ssl_ech_rejected) {
++    // Do not send client certificates on ECH reject. We have not authenticated
++    // the server for the name that can learn the certificate.
++    SSL_certs_clear(ssl);
++  } else if (hs->config->cert->cert_cb != nullptr) {
++    // Call cert_cb to update the certificate.
++    int rv = hs->config->cert->cert_cb(ssl, hs->config->cert->cert_cb_arg);
++    if (rv == 0) {
++      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
++      OPENSSL_PUT_ERROR(SSL, SSL_R_CERT_CB_ERROR);
++      return ssl_hs_error;
++    }
++    if (rv < 0) {
++      hs->tls13_state = state_send_client_certificate;
++      return ssl_hs_x509_lookup;
++    }
+   }
+ 
+-  if (!tls13_add_certificate(hs)) {
++  if (!tls13_select_client_credential(hs) ||  //
++      !tls13_add_certificate(hs)) {
+     return ssl_hs_error;
+   }
+ 
+@@ -1107,10 +1138,85 @@ static enum ssl_hs_wait_t do_complete_second_flight(SSL_HANDSHAKE *hs) {
+     return ssl_hs_error;
+   }
+ 
++  if (hs->config->post_handshake_auth && !SSL_is_dtls(ssl)) {
++    // The transcript is the context of post-handshake CertificateRequests (RFC
++    // 8446, section 4.6.2). Its buffer was freed with the handshake keys.
++    ssl->s3->post_handshake_auth_transcript = std::move(hs->transcript);
++  }
++
+   hs->tls13_state = state_done;
+   return ssl_hs_flush;
+ }
+ 
++// tls13_add_post_handshake_auth_flight answers the CertificateRequest |msg| with
++// |hs|, a handshake object made for it (see |tls13_post_handshake_auth|).
++static bool tls13_add_post_handshake_auth_flight(SSL_HANDSHAKE *hs,
++                                                 const SSLMessage &msg) {
++  SSL *const ssl = hs->ssl;
++  // The connection is established: |SSL_in_init| and the getters stay as they
++  // are while the flight is built.
++  hs->handshake_finalized = true;
++  if (!hs->transcript.CopyFrom(*ssl->s3->post_handshake_auth_transcript) ||
++      !tls13_process_certificate_request(hs, msg, /*post_handshake=*/true)) {
++    return false;
++  }
++
++  // A cert_cb cannot defer a selection after the handshake.
++  if (hs->config->cert->cert_cb != nullptr &&
++      hs->config->cert->cert_cb(ssl, hs->config->cert->cert_cb_arg) != 1) {
++    ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
++    OPENSSL_PUT_ERROR(SSL, SSL_R_CERT_CB_ERROR);
++    return false;
++  }
++
++  if (!tls13_select_client_credential(hs) ||  //
++      !tls13_add_certificate(hs)) {
++    return false;
++  }
++
++  if (hs->credential != nullptr) {
++    switch (tls13_add_certificate_verify(hs)) {
++      case ssl_private_key_success:
++        break;
++      case ssl_private_key_retry:
++        // An asynchronous private key cannot be resumed after the handshake.
++        ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
++        OPENSSL_PUT_ERROR(SSL, SSL_R_PRIVATE_KEY_OPERATION_FAILED);
++        return false;
++      case ssl_private_key_failure:
++        return false;
++    }
++  }
++
++  // The Finished key derives from the current client application traffic
++  // secret (RFC 8446, section 4.6.2), which |tls13_add_finished| reads from
++  // the handshake secret slot.
++  hs->client_handshake_secret = ssl->s3->write_traffic_secret;
++  if (!tls13_add_finished(hs)) {
++    return false;
++  }
++  ssl->method->finish_flight(ssl);
++  ssl->s3->post_handshake_auth_pending = true;
++  return true;
++}
++
++bool tls13_post_handshake_auth(SSL *ssl, const SSLMessage &msg) {
++  assert(ssl->s3->hs == nullptr);
++  if (ssl->server || !ssl->s3->post_handshake_auth_transcript.has_value()) {
++    ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
++    OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_MESSAGE);
++    return false;
++  }
++
++  // The flight is built as in the handshake, with a handshake object installed
++  // so that |ssl_add_message_cbb| hashes each message into its transcript.
++  ssl->s3->hs = ssl_handshake_new(ssl);
++  const bool ok = ssl->s3->hs != nullptr &&
++                  tls13_add_post_handshake_auth_flight(ssl->s3->hs.get(), msg);
++  ssl->s3->hs.reset();
++  return ok;
++}
++
+ enum ssl_hs_wait_t tls13_client_handshake(SSL_HANDSHAKE *hs) {
+   while (hs->tls13_state != state_done) {
+     enum ssl_hs_wait_t ret = ssl_hs_error;

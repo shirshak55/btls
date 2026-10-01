@@ -614,6 +614,7 @@ impl ExtensionType {
     pub const CHANNEL_ID: Self = Self(ffi::TLSEXT_TYPE_channel_id as u16);
     pub const RECORD_SIZE_LIMIT: Self = Self(ffi::TLSEXT_TYPE_record_size_limit as u16);
     pub const ENCRYPT_THEN_MAC: Self = Self(ffi::TLSEXT_TYPE_encrypt_then_mac as u16);
+    pub const POST_HANDSHAKE_AUTH: Self = Self(ffi::TLSEXT_TYPE_post_handshake_auth as u16);
 }
 
 impl From<u16> for ExtensionType {
@@ -2167,6 +2168,16 @@ impl SslContextBuilder {
         unsafe { ffi::SSL_CTX_set_renegotiation_scsv(self.as_ptr(), enabled as _) }
     }
 
+    /// Sets whether TLS 1.3 clients offer post-handshake authentication (RFC 8446, section
+    /// 4.2.6) with an empty post_handshake_auth extension, placed where a strict extension order
+    /// lists [`ExtensionType::POST_HANDSHAKE_AUTH`]. Such a client answers each post-handshake
+    /// CertificateRequest with its configured certificate, or an empty Certificate if none is
+    /// configured, keeping its handshake transcript hash for the life of the connection.
+    #[corresponds(SSL_CTX_set_post_handshake_auth)]
+    pub fn set_post_handshake_auth(&mut self, enabled: bool) {
+        unsafe { ffi::SSL_CTX_set_post_handshake_auth(self.as_ptr(), enabled as _) }
+    }
+
     /// Sets the trust anchor IDs clients request, as the encoded list of the trust_anchors
     /// extension.
     #[corresponds(SSL_CTX_set1_requested_trust_anchors)]
@@ -3460,6 +3471,12 @@ impl SslRef {
     #[corresponds(SSL_set_permute_extensions)]
     pub fn set_permute_extensions(&mut self, enabled: bool) {
         unsafe { ffi::SSL_set_permute_extensions(self.as_ptr(), enabled as _) }
+    }
+
+    /// Like [`SslContextBuilder::set_post_handshake_auth`].
+    #[corresponds(SSL_set_post_handshake_auth)]
+    pub fn set_post_handshake_auth(&mut self, enabled: bool) {
+        unsafe { ffi::SSL_set_post_handshake_auth(self.as_ptr(), enabled as _) }
     }
 
     /// Like [`SslContextBuilder::set_alpn_protos`].
