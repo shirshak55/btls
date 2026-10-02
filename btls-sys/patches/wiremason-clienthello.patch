@@ -3430,7 +3430,7 @@ index d155b55..3d92363 100644
        return true;
      }
 diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
-index 89702ea..7d694a8 100644
+index 89702ea..6df158a 100644
 --- a/ssl/ssl_lib.cc
 +++ b/ssl/ssl_lib.cc
 @@ -302,9 +302,11 @@ static bool ssl_can_renegotiate(const SSL *ssl) {
@@ -3491,6 +3491,15 @@ index 89702ea..7d694a8 100644
      }
  
      // Complete the current handshake, if any. False Start will cause
+@@ -1842,7 +1859,7 @@ static bool check_no_duplicates(Span<const uint16_t> list) {
+ 
+ static bool check_group_ids(Span<const uint16_t> group_ids) {
+   for (uint16_t group_id : group_ids) {
+-    if (ssl_group_id_to_nid(group_id) == NID_undef) {
++    if (SSL_get_group_name(group_id) == nullptr) {
+       OPENSSL_PUT_ERROR(SSL, SSL_R_UNSUPPORTED_ELLIPTIC_CURVE);
+       return false;
+     }
 @@ -1851,24 +1868,17 @@ static bool check_group_ids(Span<const uint16_t> group_ids) {
  }
  
