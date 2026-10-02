@@ -1454,21 +1454,45 @@ index db1a291..e59bca6 100644
      return true;
    }
    // We do not support resumption with PAKEs, so do not offer any PSK key
-@@ -2364,6 +2516,22 @@ static bool ext_early_data_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
+@@ -2364,6 +2516,46 @@ static bool ext_early_data_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
  //
  // https://tools.ietf.org/html/rfc8446#section-4.2.8
  
-+// ssl_placeholder_key_share_len returns the length of the public key a client
-+// sends for |group_id|, a group this library does not implement: the brainpool
-+// curves of RFC 8734, else 32 bytes.
-+static size_t ssl_placeholder_key_share_len(uint16_t group_id) {
++// ssl_placeholder_key_share_len returns the length of the key_exchange a client
++// sends for |group_id|, a group this library does not implement (an implemented
++// one, FFDHE, X25519MLKEM768, X25519Kyber768Draft00 and MLKEM1024 included,
++// gets a generated share instead), and sets |*out_ec_point| when it begins
++// with an uncompressed EC point, 0x04 then both coordinates. An unknown group
++// gets 32 bytes, the size of an X25519 share.
++static size_t ssl_placeholder_key_share_len(uint16_t group_id,
++                                            bool *out_ec_point) {
++  *out_ec_point = false;
 +  switch (group_id) {
++    case 0x0016:  // secp256k1
 +    case 0x001f:  // brainpoolP256r1tls13
++    case 0x0029:  // curveSM2
++      *out_ec_point = true;
 +      return 65;
 +    case 0x0020:  // brainpoolP384r1tls13
++      *out_ec_point = true;
 +      return 97;
 +    case 0x0021:  // brainpoolP512r1tls13
++      *out_ec_point = true;
 +      return 129;
++    case 0x001e:  // x448
++      return 56;
++    case 0x0200:  // MLKEM512
++      return 800;
++    case 0x0201:  // MLKEM768
++      return 1184;
++    case 0x11eb:  // SecP256r1MLKEM768: a P-256 point then an ML-KEM-768 key
++      *out_ec_point = true;
++      return 65 + 1184;
++    case 0x11ed:  // SecP384r1MLKEM1024: a P-384 point then an ML-KEM-1024 key
++      *out_ec_point = true;
++      return 97 + 1568;
++    case 0x6398:  // X25519Kyber512Draft00: an X25519 key then a Kyber512 key
++      return 32 + 800;
 +    default:
 +      return 32;
 +  }
@@ -1477,7 +1501,7 @@ index db1a291..e59bca6 100644
  bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
    SSL *const ssl = hs->ssl;
    hs->key_shares.clear();
-@@ -2384,6 +2552,24 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
+@@ -2384,6 +2576,24 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
  
    std::optional<Span<const uint16_t>> selected_key_shares;
  
@@ -1502,7 +1526,7 @@ index db1a291..e59bca6 100644
    // This is used for HelloRetryRequest, where we have already been given the
    // correct group to use.
    if (override_group_id != 0) {
-@@ -2441,7 +2627,8 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
+@@ -2441,7 +2651,8 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
      return false;
    }
  
@@ -1512,7 +1536,7 @@ index db1a291..e59bca6 100644
      // Add a fake group. See RFC 8701.
      if (!CBB_add_u16(cbb.get(), ssl_get_grease_value(hs, ssl_grease_group)) ||
          !CBB_add_u16(cbb.get(), 1 /* length */) ||
-@@ -2452,11 +2639,42 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
+@@ -2452,11 +2663,46 @@ bool ssl_setup_key_shares(SSL_HANDSHAKE *hs, uint16_t override_group_id) {
  
    CBB key_exchange;
    for (const uint16_t group_id : *selected_key_shares) {
@@ -1547,10 +1571,14 @@ index db1a291..e59bca6 100644
 +        continue;
 +      }
 +      uint8_t *placeholder;
-+      const size_t len = ssl_placeholder_key_share_len(group_id);
++      bool ec_point;
++      const size_t len = ssl_placeholder_key_share_len(group_id, &ec_point);
 +      if (!CBB_add_space(&key_exchange, &placeholder, len) ||
 +          !RAND_bytes(placeholder, len)) {
 +        return false;
++      }
++      if (ec_point) {
++        placeholder[0] = 0x04;  // POINT_CONVERSION_UNCOMPRESSED
 +      }
 +      continue;
 +    }
@@ -1559,7 +1587,7 @@ index db1a291..e59bca6 100644
          !hs->key_shares.TryPushBack(std::move(key_share))) {
        return false;
      }
-@@ -2478,7 +2696,8 @@ static bool ext_key_share_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
+@@ -2478,7 +2724,8 @@ static bool ext_key_share_add_clienthello(const SSL_HANDSHAKE *hs, CBB *out,
    // HelloRetryRequest.
    assert(!hs->key_share_bytes.empty() ||
           (hs->config->client_key_share_selections.has_value() &&
@@ -1569,7 +1597,7 @@ index db1a291..e59bca6 100644
  
    CBB contents, kse_bytes;
    if (!CBB_add_u16(out_compressible, TLSEXT_TYPE_key_share) ||
-@@ -2517,7 +2736,11 @@ bool ssl_ext_key_share_parse_serverhello(SSL_HANDSHAKE *hs,
+@@ -2517,7 +2764,11 @@ bool ssl_ext_key_share_parse_serverhello(SSL_HANDSHAKE *hs,
                     });
    if (key_share_it == hs->key_shares.end()) {
      *out_alert = SSL_AD_ILLEGAL_PARAMETER;
@@ -1582,7 +1610,7 @@ index db1a291..e59bca6 100644
      return false;
    }
    if (!(*key_share_it)->Decap(out_secret, out_alert, ciphertext)) {
-@@ -2630,7 +2853,11 @@ static bool ext_supported_versions_add_clienthello(
+@@ -2630,7 +2881,11 @@ static bool ext_supported_versions_add_clienthello(
      const SSL_HANDSHAKE *hs, CBB *out, CBB *out_compressible,
      ssl_client_hello_type_t type) {
    const SSL *const ssl = hs->ssl;
@@ -1595,7 +1623,7 @@ index db1a291..e59bca6 100644
      return true;
    }
  
-@@ -2647,6 +2874,13 @@ static bool ext_supported_versions_add_clienthello(
+@@ -2647,6 +2902,13 @@ static bool ext_supported_versions_add_clienthello(
      return false;
    }
  
@@ -1609,7 +1637,7 @@ index db1a291..e59bca6 100644
    // Add a fake version. See RFC 8701.
    if (ssl->ctx->grease_enabled &&
        !CBB_add_u16(&versions, ssl_get_grease_value(hs, ssl_grease_version))) {
-@@ -2711,6 +2945,14 @@ static bool ext_supported_groups_add_clienthello(const SSL_HANDSHAKE *hs,
+@@ -2711,6 +2973,14 @@ static bool ext_supported_groups_add_clienthello(const SSL_HANDSHAKE *hs,
      return false;
    }
  
@@ -1624,7 +1652,7 @@ index db1a291..e59bca6 100644
    // Add a fake group. See RFC 8701.
    if (ssl->ctx->grease_enabled &&
        !CBB_add_u16(&groups_bytes, ssl_get_grease_value(hs, ssl_grease_group))) {
-@@ -3257,7 +3499,23 @@ static bool ext_quic_transport_params_add_serverhello_legacy(SSL_HANDSHAKE *hs,
+@@ -3257,7 +3527,23 @@ static bool ext_quic_transport_params_add_serverhello_legacy(SSL_HANDSHAKE *hs,
  static bool ext_delegated_credential_add_clienthello(
      const SSL_HANDSHAKE *hs, CBB *out, CBB *out_compressible,
      ssl_client_hello_type_t type) {
@@ -1649,7 +1677,7 @@ index db1a291..e59bca6 100644
  }
  
  static bool ext_delegated_credential_parse_clienthello(SSL_HANDSHAKE *hs,
-@@ -4056,6 +4314,51 @@ static bool ext_server_cert_type_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
+@@ -4056,6 +4342,51 @@ static bool ext_server_cert_type_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
    return true;
  }
  
@@ -1701,7 +1729,7 @@ index db1a291..e59bca6 100644
  // kExtensions contains all the supported extensions.
  static const struct tls_extension kExtensions[] = {
      {
-@@ -4285,6 +4588,13 @@ static const struct tls_extension kExtensions[] = {
+@@ -4285,6 +4616,13 @@ static const struct tls_extension kExtensions[] = {
          ext_server_padding_parse_clienthello,
          ext_server_padding_add_serverhello,
      },
@@ -1715,7 +1743,7 @@ index db1a291..e59bca6 100644
  };
  
  #define kNumExtensions (sizeof(kExtensions) / sizeof(struct tls_extension))
-@@ -4297,6 +4607,35 @@ static_assert(kNumExtensions <=
+@@ -4297,6 +4635,35 @@ static_assert(kNumExtensions <=
                "too many extensions for received bitset");
  
  bool ssl_setup_extension_permutation(SSL_HANDSHAKE *hs) {
@@ -1751,7 +1779,7 @@ index db1a291..e59bca6 100644
    if (!hs->config->permute_extensions) {
      return true;
    }
-@@ -4344,6 +4683,131 @@ static bool add_padding_extension(CBB *cbb, uint16_t ext, size_t len) {
+@@ -4344,6 +4711,131 @@ static bool add_padding_extension(CBB *cbb, uint16_t ext, size_t len) {
    return CBB_flush(cbb);
  }
  
@@ -1883,7 +1911,7 @@ index db1a291..e59bca6 100644
  static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
                                               CBB *out_encoded) {
    // When writing ClientHelloInner, we construct the real and encoded
-@@ -4402,6 +4866,10 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
+@@ -4402,6 +4894,10 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
      }
    }
  
@@ -1894,7 +1922,7 @@ index db1a291..e59bca6 100644
    if (ssl->ctx->grease_enabled) {
      // Add a fake non-empty extension. See RFC 8701. This always matches
      // |ssl_add_clienthello_tlsext|, so compress it.
-@@ -4479,6 +4947,10 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4479,6 +4975,10 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
    // important to reset this value.
    hs->extensions.sent = 0;
  
@@ -1905,7 +1933,7 @@ index db1a291..e59bca6 100644
    // Add a fake empty extension. See RFC 8701.
    if (ssl->ctx->grease_enabled &&
        !add_padding_extension(
-@@ -4507,6 +4979,16 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4507,6 +5007,16 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
      last_was_empty = (bytes_written == 4);
    }
  
@@ -1922,7 +1950,7 @@ index db1a291..e59bca6 100644
    if (ssl->ctx->grease_enabled) {
      // Add a fake non-empty extension. See RFC 8701.
      if (!add_padding_extension(
-@@ -4515,6 +4997,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+@@ -4515,6 +5025,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
      }
      last_was_empty = false;
    }
@@ -1930,7 +1958,7 @@ index db1a291..e59bca6 100644
  
    // In cleartext ClientHellos, we add the padding extension to work around
    // bugs. We also apply this padding to ClientHelloOuter, to keep the wire
-@@ -4710,6 +5193,21 @@ static bool ssl_scan_serverhello_tlsext(SSL_HANDSHAKE *hs, const CBS *cbs,
+@@ -4710,6 +5221,21 @@ static bool ssl_scan_serverhello_tlsext(SSL_HANDSHAKE *hs, const CBS *cbs,
        return false;
      }
  
