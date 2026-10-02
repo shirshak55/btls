@@ -1,0 +1,1817 @@
+diff --git a/build.json b/build.json
+index 358a8c3..432a410 100644
+--- a/build.json
++++ b/build.json
+@@ -242,6 +242,10 @@
+             "crypto/curve25519/curve25519.cc",
+             "crypto/curve25519/curve25519_64_adx.cc",
+             "crypto/curve25519/spake25519.cc",
++            "crypto/curve448/arch_32/f_impl32.c",
++            "crypto/curve448/arch_64/f_impl64.c",
++            "crypto/curve448/f_generic.c",
++            "crypto/curve448/x448.c",
+             "crypto/des/des.cc",
+             "crypto/dh/dh_asn1.cc",
+             "crypto/dh/params.cc",
+@@ -433,6 +437,7 @@
+             "include/openssl/crypto.h",
+             "include/openssl/ctrdrbg.h",
+             "include/openssl/curve25519.h",
++            "include/openssl/curve448.h",
+             "include/openssl/des.h",
+             "include/openssl/dh.h",
+             "include/openssl/digest.h",
+@@ -509,6 +514,14 @@
+             "crypto/cpu_arm_linux.h",
+             "crypto/curve25519/curve25519_tables.h",
+             "crypto/curve25519/internal.h",
++            "crypto/curve448/arch_32/arch_intrinsics.h",
++            "crypto/curve448/arch_32/f_impl.h",
++            "crypto/curve448/arch_64/arch_intrinsics.h",
++            "crypto/curve448/arch_64/f_impl.h",
++            "crypto/curve448/curve448utils.h",
++            "crypto/curve448/field.h",
++            "crypto/curve448/internal.h",
++            "crypto/curve448/word.h",
+             "crypto/des/internal.h",
+             "crypto/dsa/internal.h",
+             "crypto/ec/internal.h",
+diff --git a/crypto/curve448/arch_32/arch_intrinsics.h b/crypto/curve448/arch_32/arch_intrinsics.h
+new file mode 100644
+index 0000000..6920a96
+--- /dev/null
++++ b/crypto/curve448/arch_32/arch_intrinsics.h
+@@ -0,0 +1,27 @@
++/*
++ * Copyright 2017-2018 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2016 Cryptography Research, Inc.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ *
++ * Originally written by Mike Hamburg
++ */
++
++#ifndef OSSL_CRYPTO_EC_CURVE448_ARCH_32_INTRINSICS_H
++#define OSSL_CRYPTO_EC_CURVE448_ARCH_32_INTRINSICS_H
++
++#include "../internal.h"
++
++#define ARCH_WORD_BITS 32
++
++#define word_is_zero(a) constant_time_is_zero_32(a)
++
++static ossl_inline uint64_t widemul(uint32_t a, uint32_t b)
++{
++    return ((uint64_t)a) * b;
++}
++
++#endif /* OSSL_CRYPTO_EC_CURVE448_ARCH_32_INTRINSICS_H */
+diff --git a/crypto/curve448/arch_32/f_impl.h b/crypto/curve448/arch_32/f_impl.h
+new file mode 100644
+index 0000000..017844c
+--- /dev/null
++++ b/crypto/curve448/arch_32/f_impl.h
+@@ -0,0 +1,64 @@
++/*
++ * Copyright 2017-2018 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2014-2016 Cryptography Research, Inc.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ *
++ * Originally written by Mike Hamburg
++ */
++
++#ifndef OSSL_CRYPTO_EC_CURVE448_ARCH_32_F_IMPL_H
++#define OSSL_CRYPTO_EC_CURVE448_ARCH_32_F_IMPL_H
++
++#define GF_HEADROOM 2
++#define LIMB(x) ((x) & ((1 << 28) - 1)), ((x) >> 28)
++#define FIELD_LITERAL(a, b, c, d, e, f, g, h)                                      \
++    {                                                                              \
++        {                                                                          \
++            LIMB(a), LIMB(b), LIMB(c), LIMB(d), LIMB(e), LIMB(f), LIMB(g), LIMB(h) \
++        }                                                                          \
++    }
++
++#define LIMB_PLACE_VALUE(i) 28
++
++void gf_add_RAW(gf out, const gf a, const gf b)
++{
++    unsigned int i;
++
++    for (i = 0; i < NLIMBS; i++)
++        out->limb[i] = a->limb[i] + b->limb[i];
++}
++
++void gf_sub_RAW(gf out, const gf a, const gf b)
++{
++    unsigned int i;
++
++    for (i = 0; i < NLIMBS; i++)
++        out->limb[i] = a->limb[i] - b->limb[i];
++}
++
++void gf_bias(gf a, int amt)
++{
++    unsigned int i;
++    uint32_t co1 = ((1 << 28) - 1) * amt, co2 = co1 - amt;
++
++    for (i = 0; i < NLIMBS; i++)
++        a->limb[i] += (i == NLIMBS / 2) ? co2 : co1;
++}
++
++void gf_weak_reduce(gf a)
++{
++    uint32_t mask = (1 << 28) - 1;
++    uint32_t tmp = a->limb[NLIMBS - 1] >> 28;
++    unsigned int i;
++
++    a->limb[NLIMBS / 2] += tmp;
++    for (i = NLIMBS - 1; i > 0; i--)
++        a->limb[i] = (a->limb[i] & mask) + (a->limb[i - 1] >> 28);
++    a->limb[0] = (a->limb[0] & mask) + tmp;
++}
++
++#endif /* OSSL_CRYPTO_EC_CURVE448_ARCH_32_F_IMPL_H */
+diff --git a/crypto/curve448/arch_32/f_impl32.c b/crypto/curve448/arch_32/f_impl32.c
+new file mode 100644
+index 0000000..8dcc270
+--- /dev/null
++++ b/crypto/curve448/arch_32/f_impl32.c
+@@ -0,0 +1,103 @@
++/*
++ * Copyright 2017-2023 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2014 Cryptography Research, Inc.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ *
++ * Originally written by Mike Hamburg
++ */
++
++#include "../internal.h"
++
++#ifdef UINT128_MAX
++/* We have support for 128 bit ints, so do nothing here */
++NON_EMPTY_TRANSLATION_UNIT
++#else
++
++#include "../field.h"
++
++void ossl_gf_mul(gf_s *RESTRICT cs, const gf as, const gf bs)
++{
++    const uint32_t *a = as->limb, *b = bs->limb;
++    uint32_t *c = cs->limb;
++    uint64_t accum0 = 0, accum1 = 0, accum2 = 0;
++    uint32_t mask = (1 << 28) - 1;
++    uint32_t aa[8], bb[8];
++    int i, j;
++
++    for (i = 0; i < 8; i++) {
++        aa[i] = a[i] + a[i + 8];
++        bb[i] = b[i] + b[i + 8];
++    }
++
++    for (j = 0; j < 8; j++) {
++        accum2 = 0;
++        for (i = 0; i < j + 1; i++) {
++            accum2 += widemul(a[j - i], b[i]);
++            accum1 += widemul(aa[j - i], bb[i]);
++            accum0 += widemul(a[8 + j - i], b[8 + i]);
++        }
++        accum1 -= accum2;
++        accum0 += accum2;
++        accum2 = 0;
++        for (i = j + 1; i < 8; i++) {
++            accum0 -= widemul(a[8 + j - i], b[i]);
++            accum2 += widemul(aa[8 + j - i], bb[i]);
++            accum1 += widemul(a[16 + j - i], b[8 + i]);
++        }
++        accum1 += accum2;
++        accum0 += accum2;
++        c[j] = ((uint32_t)(accum0)) & mask;
++        c[j + 8] = ((uint32_t)(accum1)) & mask;
++        accum0 >>= 28;
++        accum1 >>= 28;
++    }
++
++    accum0 += accum1;
++    accum0 += c[8];
++    accum1 += c[0];
++    c[8] = ((uint32_t)(accum0)) & mask;
++    c[0] = ((uint32_t)(accum1)) & mask;
++
++    accum0 >>= 28;
++    accum1 >>= 28;
++    c[9] += ((uint32_t)(accum0));
++    c[1] += ((uint32_t)(accum1));
++}
++
++void ossl_gf_mulw_unsigned(gf_s *RESTRICT cs, const gf as, uint32_t b)
++{
++    const uint32_t *a = as->limb;
++    uint32_t *c = cs->limb;
++    uint64_t accum0 = 0, accum8 = 0;
++    uint32_t mask = (1 << 28) - 1;
++    int i;
++
++    assert(b <= mask);
++
++    for (i = 0; i < 8; i++) {
++        accum0 += widemul(b, a[i]);
++        accum8 += widemul(b, a[i + 8]);
++        c[i] = accum0 & mask;
++        accum0 >>= 28;
++        c[i + 8] = accum8 & mask;
++        accum8 >>= 28;
++    }
++
++    accum0 += accum8 + c[8];
++    c[8] = ((uint32_t)accum0) & mask;
++    c[9] += (uint32_t)(accum0 >> 28);
++
++    accum8 += c[0];
++    c[0] = ((uint32_t)accum8) & mask;
++    c[1] += (uint32_t)(accum8 >> 28);
++}
++
++void ossl_gf_sqr(gf_s *RESTRICT cs, const gf as)
++{
++    ossl_gf_mul(cs, as, as); /* Performs better with a dedicated square */
++}
++#endif
+diff --git a/crypto/curve448/arch_64/arch_intrinsics.h b/crypto/curve448/arch_64/arch_intrinsics.h
+new file mode 100644
+index 0000000..f2667a9
+--- /dev/null
++++ b/crypto/curve448/arch_64/arch_intrinsics.h
+@@ -0,0 +1,27 @@
++/*
++ * Copyright 2017-2022 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2016 Cryptography Research, Inc.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ *
++ * Originally written by Mike Hamburg
++ */
++
++#ifndef OSSL_CRYPTO_EC_CURVE448_ARCH_64_INTRINSICS_H
++#define OSSL_CRYPTO_EC_CURVE448_ARCH_64_INTRINSICS_H
++
++#include "../internal.h"
++
++#define ARCH_WORD_BITS 64
++
++#define word_is_zero(a) constant_time_is_zero_64(a)
++
++static ossl_inline uint128_t widemul(uint64_t a, uint64_t b)
++{
++    return ((uint128_t)a) * b;
++}
++
++#endif /* OSSL_CRYPTO_EC_CURVE448_ARCH_64_INTRINSICS_H */
+diff --git a/crypto/curve448/arch_64/f_impl.h b/crypto/curve448/arch_64/f_impl.h
+new file mode 100644
+index 0000000..3e27820
+--- /dev/null
++++ b/crypto/curve448/arch_64/f_impl.h
+@@ -0,0 +1,63 @@
++/*
++ * Copyright 2017-2022 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2014-2016 Cryptography Research, Inc.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ *
++ * Originally written by Mike Hamburg
++ */
++
++#ifndef OSSL_CRYPTO_EC_CURVE448_ARCH_64_F_IMPL_H
++#define OSSL_CRYPTO_EC_CURVE448_ARCH_64_F_IMPL_H
++
++#define GF_HEADROOM 9999 /* Everything is reduced anyway */
++#define FIELD_LITERAL(a, b, c, d, e, f, g, h) \
++    {                                         \
++        {                                     \
++            a, b, c, d, e, f, g, h            \
++        }                                     \
++    }
++
++#define LIMB_PLACE_VALUE(i) 56
++
++void gf_add_RAW(gf out, const gf a, const gf b)
++{
++    unsigned int i;
++
++    for (i = 0; i < NLIMBS; i++)
++        out->limb[i] = a->limb[i] + b->limb[i];
++
++    gf_weak_reduce(out);
++}
++
++void gf_sub_RAW(gf out, const gf a, const gf b)
++{
++    uint64_t co1 = ((1ULL << 56) - 1) * 2, co2 = co1 - 2;
++    unsigned int i;
++
++    for (i = 0; i < NLIMBS; i++)
++        out->limb[i] = a->limb[i] - b->limb[i] + ((i == NLIMBS / 2) ? co2 : co1);
++
++    gf_weak_reduce(out);
++}
++
++void gf_bias(gf a, int amt)
++{
++}
++
++void gf_weak_reduce(gf a)
++{
++    uint64_t mask = (1ULL << 56) - 1;
++    uint64_t tmp = a->limb[NLIMBS - 1] >> 56;
++    unsigned int i;
++
++    a->limb[NLIMBS / 2] += tmp;
++    for (i = NLIMBS - 1; i > 0; i--)
++        a->limb[i] = (a->limb[i] & mask) + (a->limb[i - 1] >> 56);
++    a->limb[0] = (a->limb[0] & mask) + tmp;
++}
++
++#endif /* OSSL_CRYPTO_EC_CURVE448_ARCH_64_F_IMPL_H */
+diff --git a/crypto/curve448/arch_64/f_impl64.c b/crypto/curve448/arch_64/f_impl64.c
+new file mode 100644
+index 0000000..753449c
+--- /dev/null
++++ b/crypto/curve448/arch_64/f_impl64.c
+@@ -0,0 +1,208 @@
++/*
++ * Copyright 2017-2024 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2014 Cryptography Research, Inc.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ *
++ * Originally written by Mike Hamburg
++ */
++
++#include "../internal.h"
++
++#ifndef UINT128_MAX
++/* No support for 128 bit ints, so do nothing here */
++NON_EMPTY_TRANSLATION_UNIT
++#else
++
++#include "../field.h"
++
++void ossl_gf_mul(gf_s *RESTRICT cs, const gf as, const gf bs)
++{
++    const uint64_t *a = as->limb, *b = bs->limb;
++    uint64_t *c = cs->limb;
++    uint128_t accum0 = 0, accum1 = 0, accum2;
++    uint64_t mask = (1ULL << 56) - 1;
++    uint64_t aa[4], bb[4], bbb[4];
++    unsigned int i, j;
++
++    for (i = 0; i < 4; i++) {
++        aa[i] = a[i] + a[i + 4];
++        bb[i] = b[i] + b[i + 4];
++        bbb[i] = bb[i] + b[i + 4];
++    }
++
++    for (i = 0; i < 4; i++) {
++        accum2 = 0;
++
++        for (j = 0; j <= i; j++) {
++            accum2 += widemul(a[j], b[i - j]);
++            accum1 += widemul(aa[j], bb[i - j]);
++            accum0 += widemul(a[j + 4], b[i - j + 4]);
++        }
++        for (; j < 4; j++) {
++            accum2 += widemul(a[j], b[i + 8 - j]);
++            accum1 += widemul(aa[j], bbb[i + 4 - j]);
++            accum0 += widemul(a[j + 4], bb[i + 4 - j]);
++        }
++
++        accum1 -= accum2;
++        accum0 += accum2;
++
++        c[i] = ((uint64_t)(accum0)) & mask;
++        c[i + 4] = ((uint64_t)(accum1)) & mask;
++
++        accum0 >>= 56;
++        accum1 >>= 56;
++    }
++
++    accum0 += accum1;
++    accum0 += c[4];
++    accum1 += c[0];
++    c[4] = ((uint64_t)(accum0)) & mask;
++    c[0] = ((uint64_t)(accum1)) & mask;
++
++    accum0 >>= 56;
++    accum1 >>= 56;
++
++    c[5] += ((uint64_t)(accum0));
++    c[1] += ((uint64_t)(accum1));
++}
++
++void ossl_gf_mulw_unsigned(gf_s *RESTRICT cs, const gf as, uint32_t b)
++{
++    const uint64_t *a = as->limb;
++    uint64_t *c = cs->limb;
++    uint128_t accum0 = 0, accum4 = 0;
++    uint64_t mask = (1ULL << 56) - 1;
++    int i;
++
++    for (i = 0; i < 4; i++) {
++        accum0 += widemul(b, a[i]);
++        accum4 += widemul(b, a[i + 4]);
++        c[i] = accum0 & mask;
++        accum0 >>= 56;
++        c[i + 4] = accum4 & mask;
++        accum4 >>= 56;
++    }
++
++    accum0 += accum4 + c[4];
++    c[4] = accum0 & mask;
++    c[5] += accum0 >> 56;
++
++    accum4 += c[0];
++    c[0] = accum4 & mask;
++    c[1] += accum4 >> 56;
++}
++
++void ossl_gf_sqr(gf_s *RESTRICT cs, const gf as)
++{
++    const uint64_t *a = as->limb;
++    uint64_t *c = cs->limb;
++    uint128_t accum0 = 0, accum1 = 0, accum2;
++    uint64_t mask = (1ULL << 56) - 1;
++    uint64_t aa[4];
++    unsigned int i;
++
++    /* For some reason clang doesn't vectorize this without prompting? */
++    for (i = 0; i < 4; i++)
++        aa[i] = a[i] + a[i + 4];
++
++    accum2 = widemul(a[0], a[3]);
++    accum0 = widemul(aa[0], aa[3]);
++    accum1 = widemul(a[4], a[7]);
++
++    accum2 += widemul(a[1], a[2]);
++    accum0 += widemul(aa[1], aa[2]);
++    accum1 += widemul(a[5], a[6]);
++
++    accum0 -= accum2;
++    accum1 += accum2;
++
++    c[3] = ((uint64_t)(accum1)) << 1 & mask;
++    c[7] = ((uint64_t)(accum0)) << 1 & mask;
++
++    accum0 >>= 55;
++    accum1 >>= 55;
++
++    accum0 += widemul(2 * aa[1], aa[3]);
++    accum1 += widemul(2 * a[5], a[7]);
++    accum0 += widemul(aa[2], aa[2]);
++    accum1 += accum0;
++
++    accum0 -= widemul(2 * a[1], a[3]);
++    accum1 += widemul(a[6], a[6]);
++
++    accum2 = widemul(a[0], a[0]);
++    accum1 -= accum2;
++    accum0 += accum2;
++
++    accum0 -= widemul(a[2], a[2]);
++    accum1 += widemul(aa[0], aa[0]);
++    accum0 += widemul(a[4], a[4]);
++
++    c[0] = ((uint64_t)(accum0)) & mask;
++    c[4] = ((uint64_t)(accum1)) & mask;
++
++    accum0 >>= 56;
++    accum1 >>= 56;
++
++    accum2 = widemul(2 * aa[2], aa[3]);
++    accum0 -= widemul(2 * a[2], a[3]);
++    accum1 += widemul(2 * a[6], a[7]);
++
++    accum1 += accum2;
++    accum0 += accum2;
++
++    accum2 = widemul(2 * a[0], a[1]);
++    accum1 += widemul(2 * aa[0], aa[1]);
++    accum0 += widemul(2 * a[4], a[5]);
++
++    accum1 -= accum2;
++    accum0 += accum2;
++
++    c[1] = ((uint64_t)(accum0)) & mask;
++    c[5] = ((uint64_t)(accum1)) & mask;
++
++    accum0 >>= 56;
++    accum1 >>= 56;
++
++    accum2 = widemul(aa[3], aa[3]);
++    accum0 -= widemul(a[3], a[3]);
++    accum1 += widemul(a[7], a[7]);
++
++    accum1 += accum2;
++    accum0 += accum2;
++
++    accum2 = widemul(2 * a[0], a[2]);
++    accum1 += widemul(2 * aa[0], aa[2]);
++    accum0 += widemul(2 * a[4], a[6]);
++
++    accum2 += widemul(a[1], a[1]);
++    accum1 += widemul(aa[1], aa[1]);
++    accum0 += widemul(a[5], a[5]);
++
++    accum1 -= accum2;
++    accum0 += accum2;
++
++    c[2] = ((uint64_t)(accum0)) & mask;
++    c[6] = ((uint64_t)(accum1)) & mask;
++
++    accum0 >>= 56;
++    accum1 >>= 56;
++
++    accum0 += c[3];
++    accum1 += c[7];
++    c[3] = ((uint64_t)(accum0)) & mask;
++    c[7] = ((uint64_t)(accum1)) & mask;
++
++    /* we could almost stop here, but it wouldn't be stable, so... */
++
++    accum0 >>= 56;
++    accum1 >>= 56;
++    c[4] += ((uint64_t)(accum0)) + ((uint64_t)(accum1));
++    c[0] += ((uint64_t)(accum1));
++}
++#endif
+diff --git a/crypto/curve448/curve448utils.h b/crypto/curve448/curve448utils.h
+new file mode 100644
+index 0000000..407232e
+--- /dev/null
++++ b/crypto/curve448/curve448utils.h
+@@ -0,0 +1,80 @@
++/*
++ * Copyright 2017-2021 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2015 Cryptography Research, Inc.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ *
++ * Originally written by Mike Hamburg
++ */
++
++#ifndef OSSL_CRYPTO_EC_CURVE448UTILS_H
++#define OSSL_CRYPTO_EC_CURVE448UTILS_H
++
++#include "internal.h"
++
++/*
++ * Internal word types. Somewhat tricky.  This could be decided separately per
++ * platform.  However, the structs do need to be all the same size and
++ * alignment on a given platform to support dynamic linking, since even if you
++ * header was built with eg arch_neon, you might end up linking a library built
++ * with arch_arm32.
++ */
++#ifndef C448_WORD_BITS
++#if (defined(__SIZEOF_INT128__) && (__SIZEOF_INT128__ == 16)) \
++    && !defined(__sparc__)                                    \
++    && (!defined(__SIZEOF_LONG__) || (__SIZEOF_LONG__ == 8))
++
++#define C448_WORD_BITS 64 /* The number of bits in a word */
++#else
++#define C448_WORD_BITS 32 /* The number of bits in a word */
++#endif
++#endif
++
++#if C448_WORD_BITS == 64
++/* Word size for internal computations */
++typedef uint64_t c448_word_t;
++/* Signed word size for internal computations */
++typedef int64_t c448_sword_t;
++/* "Boolean" type, will be set to all-zero or all-one (i.e. -1u) */
++typedef uint64_t c448_bool_t;
++/* Double-word size for internal computations */
++typedef uint128_t c448_dword_t;
++/* Signed double-word size for internal computations */
++typedef int128_t c448_dsword_t;
++#elif C448_WORD_BITS == 32
++/* Word size for internal computations */
++typedef uint32_t c448_word_t;
++/* Signed word size for internal computations */
++typedef int32_t c448_sword_t;
++/* "Boolean" type, will be set to all-zero or all-one (i.e. -1u) */
++typedef uint32_t c448_bool_t;
++/* Double-word size for internal computations */
++typedef uint64_t c448_dword_t;
++/* Signed double-word size for internal computations */
++typedef int64_t c448_dsword_t;
++#else
++#error "Only supporting C448_WORD_BITS = 32 or 64 for now"
++#endif
++
++/* C448_TRUE = -1 so that C448_TRUE & x = x */
++#define C448_TRUE (0 - (c448_bool_t)1)
++
++/* C448_FALSE = 0 so that C448_FALSE & x = 0 */
++#define C448_FALSE 0
++
++/* Another boolean type used to indicate success or failure. */
++typedef enum {
++    C448_SUCCESS = -1, /**< The operation succeeded. */
++    C448_FAILURE = 0 /**< The operation failed. */
++} c448_error_t;
++
++/* Return success if x is true */
++static ossl_inline c448_error_t c448_succeed_if(c448_bool_t x)
++{
++    return (c448_error_t)x;
++}
++
++#endif /* __C448_COMMON_H__ */
+diff --git a/crypto/curve448/f_generic.c b/crypto/curve448/f_generic.c
+new file mode 100644
+index 0000000..ad605b6
+--- /dev/null
++++ b/crypto/curve448/f_generic.c
+@@ -0,0 +1,199 @@
++/*
++ * Copyright 2017-2023 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2015-2016 Cryptography Research, Inc.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ *
++ * Originally written by Mike Hamburg
++ */
++#include "field.h"
++
++static const gf MODULUS = {
++    FIELD_LITERAL(0xffffffffffffffULL, 0xffffffffffffffULL, 0xffffffffffffffULL,
++        0xffffffffffffffULL, 0xfffffffffffffeULL, 0xffffffffffffffULL,
++        0xffffffffffffffULL, 0xffffffffffffffULL)
++};
++
++/* Serialize to wire format. */
++void gf_serialize(uint8_t serial[SER_BYTES], const gf x, int with_hibit)
++{
++    unsigned int j = 0, fill = 0;
++    dword_t buffer = 0;
++    int i;
++    gf red;
++
++    gf_copy(red, x);
++    gf_strong_reduce(red);
++    if (!with_hibit)
++        assert(gf_hibit(red) == 0);
++
++    for (i = 0; i < (with_hibit ? X_SER_BYTES : SER_BYTES); i++) {
++        if (fill < 8 && j < NLIMBS) {
++            buffer |= ((dword_t)red->limb[LIMBPERM(j)]) << fill;
++            fill += LIMB_PLACE_VALUE(LIMBPERM(j));
++            j++;
++        }
++        serial[i] = (uint8_t)buffer;
++        fill -= 8;
++        buffer >>= 8;
++    }
++}
++
++/* Return high bit of x = low bit of 2x mod p */
++mask_t gf_hibit(const gf x)
++{
++    gf y;
++
++    gf_add(y, x, x);
++    gf_strong_reduce(y);
++    return 0 - (y->limb[0] & 1);
++}
++
++/* Return high bit of x = low bit of 2x mod p */
++mask_t gf_lobit(const gf x)
++{
++    gf y;
++
++    gf_copy(y, x);
++    gf_strong_reduce(y);
++    return 0 - (y->limb[0] & 1);
++}
++
++/* Deserialize from wire format; return -1 on success and 0 on failure. */
++mask_t gf_deserialize(gf x, const uint8_t serial[SER_BYTES], int with_hibit,
++    uint8_t hi_nmask)
++{
++    unsigned int j = 0, fill = 0;
++    dword_t buffer = 0;
++    dsword_t scarry = 0;
++    const unsigned nbytes = with_hibit ? X_SER_BYTES : SER_BYTES;
++    unsigned int i;
++    mask_t succ;
++
++    for (i = 0; i < NLIMBS; i++) {
++        while (fill < LIMB_PLACE_VALUE(LIMBPERM(i)) && j < nbytes) {
++            uint8_t sj;
++
++            sj = serial[j];
++            if (j == nbytes - 1)
++                sj &= ~hi_nmask;
++            buffer |= ((dword_t)sj) << fill;
++            fill += 8;
++            j++;
++        }
++        x->limb[LIMBPERM(i)] = (word_t)((i < NLIMBS - 1) ? buffer & LIMB_MASK(LIMBPERM(i)) : buffer);
++        fill -= LIMB_PLACE_VALUE(LIMBPERM(i));
++        buffer >>= LIMB_PLACE_VALUE(LIMBPERM(i));
++        scarry = (scarry + x->limb[LIMBPERM(i)] - MODULUS->limb[LIMBPERM(i)]) >> (8 * sizeof(word_t));
++    }
++    succ = with_hibit ? 0 - (mask_t)1 : ~gf_hibit(x);
++    return succ & word_is_zero((word_t)buffer) & ~word_is_zero((word_t)scarry);
++}
++
++/* Reduce to canonical form. */
++void gf_strong_reduce(gf a)
++{
++    dsword_t scarry;
++    word_t scarry_0;
++    dword_t carry = 0;
++    unsigned int i;
++
++    /* first, clear high */
++    gf_weak_reduce(a); /* Determined to have negligible perf impact. */
++
++    /* now the total is less than 2p */
++
++    /* compute total_value - p.  No need to reduce mod p. */
++    scarry = 0;
++    for (i = 0; i < NLIMBS; i++) {
++        scarry = scarry + a->limb[LIMBPERM(i)] - MODULUS->limb[LIMBPERM(i)];
++        a->limb[LIMBPERM(i)] = scarry & LIMB_MASK(LIMBPERM(i));
++        scarry >>= LIMB_PLACE_VALUE(LIMBPERM(i));
++    }
++
++    /*
++     * uncommon case: it was >= p, so now scarry = 0 and this = x common case:
++     * it was < p, so now scarry = -1 and this = x - p + 2^255 so let's add
++     * back in p.  will carry back off the top for 2^255.
++     */
++    assert(scarry == 0 || scarry == -1);
++
++    scarry_0 = (word_t)scarry;
++
++    /* add it back */
++    for (i = 0; i < NLIMBS; i++) {
++        carry = carry + a->limb[LIMBPERM(i)] + (scarry_0 & MODULUS->limb[LIMBPERM(i)]);
++        a->limb[LIMBPERM(i)] = carry & LIMB_MASK(LIMBPERM(i));
++        carry >>= LIMB_PLACE_VALUE(LIMBPERM(i));
++    }
++
++    assert(carry < 2 && ((word_t)carry + scarry_0) == 0);
++}
++
++/* Subtract two gf elements d=a-b */
++void gf_sub(gf d, const gf a, const gf b)
++{
++    gf_sub_RAW(d, a, b);
++    gf_bias(d, 2);
++    gf_weak_reduce(d);
++}
++
++/* Add two field elements d = a+b */
++void gf_add(gf d, const gf a, const gf b)
++{
++    gf_add_RAW(d, a, b);
++    gf_weak_reduce(d);
++}
++
++/* Compare a==b */
++mask_t gf_eq(const gf a, const gf b)
++{
++    gf c;
++    mask_t ret = 0;
++    unsigned int i;
++
++    gf_sub(c, a, b);
++    gf_strong_reduce(c);
++
++    for (i = 0; i < NLIMBS; i++)
++        ret |= c->limb[LIMBPERM(i)];
++
++    return word_is_zero(ret);
++}
++
++mask_t gf_isr(gf a, const gf x)
++{
++    gf L0, L1, L2;
++
++    ossl_gf_sqr(L1, x);
++    ossl_gf_mul(L2, x, L1);
++    ossl_gf_sqr(L1, L2);
++    ossl_gf_mul(L2, x, L1);
++    gf_sqrn(L1, L2, 3);
++    ossl_gf_mul(L0, L2, L1);
++    gf_sqrn(L1, L0, 3);
++    ossl_gf_mul(L0, L2, L1);
++    gf_sqrn(L2, L0, 9);
++    ossl_gf_mul(L1, L0, L2);
++    ossl_gf_sqr(L0, L1);
++    ossl_gf_mul(L2, x, L0);
++    gf_sqrn(L0, L2, 18);
++    ossl_gf_mul(L2, L1, L0);
++    gf_sqrn(L0, L2, 37);
++    ossl_gf_mul(L1, L2, L0);
++    gf_sqrn(L0, L1, 37);
++    ossl_gf_mul(L1, L2, L0);
++    gf_sqrn(L0, L1, 111);
++    ossl_gf_mul(L2, L1, L0);
++    ossl_gf_sqr(L0, L2);
++    ossl_gf_mul(L1, x, L0);
++    gf_sqrn(L0, L1, 223);
++    ossl_gf_mul(L1, L2, L0);
++    ossl_gf_sqr(L2, L1);
++    ossl_gf_mul(L0, L2, x);
++    gf_copy(a, L1);
++    return gf_eq(L0, ONE);
++}
+diff --git a/crypto/curve448/field.h b/crypto/curve448/field.h
+new file mode 100644
+index 0000000..d568d62
+--- /dev/null
++++ b/crypto/curve448/field.h
+@@ -0,0 +1,172 @@
++/*
++ * Copyright 2017-2023 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2014 Cryptography Research, Inc.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ *
++ * Originally written by Mike Hamburg
++ */
++
++#ifndef OSSL_CRYPTO_EC_CURVE448_FIELD_H
++#define OSSL_CRYPTO_EC_CURVE448_FIELD_H
++
++#include "internal.h"
++#include <string.h>
++#include <assert.h>
++#include "word.h"
++
++#define NLIMBS (64 / sizeof(word_t))
++#define X_SER_BYTES 56
++#define SER_BYTES 56
++
++#if defined(__GNUC__) || defined(__clang__)
++#define INLINE_UNUSED __inline__ __attribute__((__unused__, __always_inline__))
++#define RESTRICT __restrict__
++#define ALIGNED __attribute__((__aligned__(16)))
++#else
++#define INLINE_UNUSED ossl_inline
++#define RESTRICT
++#define ALIGNED
++#endif
++
++typedef struct gf_s {
++    word_t limb[NLIMBS];
++} ALIGNED gf_s, gf[1];
++
++/* RFC 7748 support */
++#define X_PUBLIC_BYTES X_SER_BYTES
++#define X_PRIVATE_BYTES X_PUBLIC_BYTES
++#define X_PRIVATE_BITS 448
++
++static INLINE_UNUSED void gf_copy(gf out, const gf a)
++{
++    *out = *a;
++}
++
++static INLINE_UNUSED void gf_add_RAW(gf out, const gf a, const gf b);
++static INLINE_UNUSED void gf_sub_RAW(gf out, const gf a, const gf b);
++static INLINE_UNUSED void gf_bias(gf inout, int amount);
++static INLINE_UNUSED void gf_weak_reduce(gf inout);
++
++void gf_strong_reduce(gf inout);
++void gf_add(gf out, const gf a, const gf b);
++void gf_sub(gf out, const gf a, const gf b);
++void ossl_gf_mul(gf_s *RESTRICT out, const gf a, const gf b);
++void ossl_gf_mulw_unsigned(gf_s *RESTRICT out, const gf a, uint32_t b);
++void ossl_gf_sqr(gf_s *RESTRICT out, const gf a);
++mask_t gf_isr(gf a, const gf x); /** a^2 x = 1, QNR, or 0 if x=0.  Return true if successful */
++mask_t gf_eq(const gf x, const gf y);
++mask_t gf_lobit(const gf x);
++mask_t gf_hibit(const gf x);
++
++void gf_serialize(uint8_t serial[SER_BYTES], const gf x, int with_highbit);
++mask_t gf_deserialize(gf x, const uint8_t serial[SER_BYTES], int with_hibit,
++    uint8_t hi_nmask);
++
++#define LIMBPERM(i) (i)
++#if (ARCH_WORD_BITS == 32)
++#include "arch_32/f_impl.h" /* Bring in the inline implementations */
++#define LIMB_MASK(i) (((1) << LIMB_PLACE_VALUE(i)) - 1)
++#elif (ARCH_WORD_BITS == 64)
++#include "arch_64/f_impl.h" /* Bring in the inline implementations */
++#define LIMB_MASK(i) (((1ULL) << LIMB_PLACE_VALUE(i)) - 1)
++#endif
++
++static const gf ZERO = { { { 0 } } }, ONE = { { { 1 } } };
++
++/* Square x, n times. */
++static ossl_inline void gf_sqrn(gf_s *RESTRICT y, const gf x, int n)
++{
++    gf tmp;
++
++    assert(n > 0);
++    if (n & 1) {
++        ossl_gf_sqr(y, x);
++        n--;
++    } else {
++        ossl_gf_sqr(tmp, x);
++        ossl_gf_sqr(y, tmp);
++        n -= 2;
++    }
++    for (; n; n -= 2) {
++        ossl_gf_sqr(tmp, y);
++        ossl_gf_sqr(y, tmp);
++    }
++}
++
++#define gf_add_nr gf_add_RAW
++
++/* Subtract mod p.  Bias by 2 and don't reduce  */
++static ossl_inline void gf_sub_nr(gf c, const gf a, const gf b)
++{
++    gf_sub_RAW(c, a, b);
++    gf_bias(c, 2);
++    if (GF_HEADROOM < 3)
++        gf_weak_reduce(c);
++}
++
++/* Subtract mod p. Bias by amt but don't reduce.  */
++static ossl_inline void gf_subx_nr(gf c, const gf a, const gf b, int amt)
++{
++    gf_sub_RAW(c, a, b);
++    gf_bias(c, amt);
++    if (GF_HEADROOM < amt + 1)
++        gf_weak_reduce(c);
++}
++
++/* Mul by signed int.  Not constant-time WRT the sign of that int. */
++static ossl_inline void gf_mulw(gf c, const gf a, int32_t w)
++{
++    if (w > 0) {
++        ossl_gf_mulw_unsigned(c, a, w);
++    } else {
++        ossl_gf_mulw_unsigned(c, a, -w);
++        gf_sub(c, ZERO, c);
++    }
++}
++
++/* Constant time, x = is_z ? z : y */
++static ossl_inline void gf_cond_sel(gf x, const gf y, const gf z, mask_t is_z)
++{
++    size_t i;
++
++    for (i = 0; i < NLIMBS; i++) {
++#if ARCH_WORD_BITS == 32
++        x[0].limb[i] = constant_time_select_32(is_z, z[0].limb[i],
++            y[0].limb[i]);
++#else
++        /* Must be 64 bit */
++        x[0].limb[i] = constant_time_select_64(is_z, z[0].limb[i],
++            y[0].limb[i]);
++#endif
++    }
++}
++
++/* Constant time, if (neg) x=-x; */
++static ossl_inline void gf_cond_neg(gf x, mask_t neg)
++{
++    gf y;
++
++    gf_sub(y, ZERO, x);
++    gf_cond_sel(x, x, y, neg);
++}
++
++/* Constant time, if (swap) (x,y) = (y,x); */
++static ossl_inline void gf_cond_swap(gf x, gf_s *RESTRICT y, mask_t swap)
++{
++    size_t i;
++
++    for (i = 0; i < NLIMBS; i++) {
++#if ARCH_WORD_BITS == 32
++        constant_time_cond_swap_32(swap, &(x[0].limb[i]), &(y->limb[i]));
++#else
++        /* Must be 64 bit */
++        constant_time_cond_swap_64(swap, &(x[0].limb[i]), &(y->limb[i]));
++#endif
++    }
++}
++
++#endif /* OSSL_CRYPTO_EC_CURVE448_FIELD_H */
+diff --git a/crypto/curve448/internal.h b/crypto/curve448/internal.h
+new file mode 100644
+index 0000000..54f03f0
+--- /dev/null
++++ b/crypto/curve448/internal.h
+@@ -0,0 +1,133 @@
++/*
++ * Copyright 2014-2025 The OpenSSL Project Authors. All Rights Reserved.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ */
++
++/*
++ * The definitions from OpenSSL's <openssl/e_os2.h>, <openssl/macros.h>,
++ * include/internal/numbers.h and include/internal/constant_time.h that the
++ * X448 code taken from OpenSSL 3.6's crypto/ec/curve448 uses, as OpenSSL
++ * defines them.
++ */
++
++#ifndef OPENSSL_HEADER_CRYPTO_CURVE448_INTERNAL_H
++#define OPENSSL_HEADER_CRYPTO_CURVE448_INTERNAL_H
++
++#include <stdint.h>
++
++#include <openssl/mem.h>
++
++#define ossl_inline inline
++
++#define NON_EMPTY_TRANSLATION_UNIT static void *dummy = &dummy;
++
++#ifndef INT128_MAX
++#if defined(__SIZEOF_INT128__) && __SIZEOF_INT128__ == 16
++typedef __int128_t int128_t;
++typedef __uint128_t uint128_t;
++#define INT128_MAX ((int128_t)(((uint128_t)1 << 127) - 1))
++#define UINT128_MAX ((uint128_t)-1)
++#endif
++#endif
++
++static ossl_inline uint32_t constant_time_msb_32(uint32_t a)
++{
++    return 0 - (a >> 31);
++}
++
++static ossl_inline uint64_t constant_time_msb_64(uint64_t a)
++{
++    return 0 - (a >> 63);
++}
++
++static ossl_inline uint32_t constant_time_is_zero_32(uint32_t a)
++{
++    return constant_time_msb_32(~a & (a - 1));
++}
++
++static ossl_inline uint64_t constant_time_is_zero_64(uint64_t a)
++{
++    return constant_time_msb_64(~a & (a - 1));
++}
++
++/* Convenience method for uint32_t. */
++static ossl_inline uint32_t value_barrier_32(uint32_t a)
++{
++#if !defined(OPENSSL_NO_ASM) && defined(__GNUC__)
++    uint32_t r;
++    __asm__("" : "=r"(r) : "0"(a));
++#else
++    volatile uint32_t r = a;
++#endif
++    return r;
++}
++
++/* Convenience method for uint64_t. */
++static ossl_inline uint64_t value_barrier_64(uint64_t a)
++{
++#if !defined(OPENSSL_NO_ASM) && defined(__GNUC__)
++    uint64_t r;
++    __asm__("" : "=r"(r) : "0"(a));
++#else
++    volatile uint64_t r = a;
++#endif
++    return r;
++}
++
++static ossl_inline uint32_t constant_time_select_32(uint32_t mask, uint32_t a,
++    uint32_t b)
++{
++    return (value_barrier_32(mask) & a) | (value_barrier_32(~mask) & b);
++}
++
++static ossl_inline uint64_t constant_time_select_64(uint64_t mask, uint64_t a,
++    uint64_t b)
++{
++    return (value_barrier_64(mask) & a) | (value_barrier_64(~mask) & b);
++}
++
++/*
++ * mask must be 0xFFFFFFFF or 0x00000000.
++ *
++ * if (mask) {
++ *     uint32_t tmp = *a;
++ *
++ *     *a = *b;
++ *     *b = tmp;
++ * }
++ */
++static ossl_inline void constant_time_cond_swap_32(uint32_t mask, uint32_t *a,
++    uint32_t *b)
++{
++    uint32_t xor = *a ^ *b;
++
++    xor&= value_barrier_32(mask);
++    *a ^= xor;
++    *b ^= xor;
++}
++
++/*
++ * mask must be 0xFFFFFFFF or 0x00000000.
++ *
++ * if (mask) {
++ *     uint64_t tmp = *a;
++ *
++ *     *a = *b;
++ *     *b = tmp;
++ * }
++ */
++static ossl_inline void constant_time_cond_swap_64(uint64_t mask, uint64_t *a,
++    uint64_t *b)
++{
++    uint64_t xor = *a ^ *b;
++
++    xor&= value_barrier_64(mask);
++    *a ^= xor;
++    *b ^= xor;
++}
++
++#endif /* OPENSSL_HEADER_CRYPTO_CURVE448_INTERNAL_H */
+diff --git a/crypto/curve448/word.h b/crypto/curve448/word.h
+new file mode 100644
+index 0000000..07e5ba8
+--- /dev/null
++++ b/crypto/curve448/word.h
+@@ -0,0 +1,92 @@
++/*
++ * Copyright 2017-2026 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2014 Cryptography Research, Inc.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ *
++ * Originally written by Mike Hamburg
++ */
++
++#ifndef OSSL_CRYPTO_EC_CURVE448_WORD_H
++#define OSSL_CRYPTO_EC_CURVE448_WORD_H
++
++#include <string.h>
++#include <assert.h>
++#include <stdlib.h>
++#include "internal.h"
++#include "curve448utils.h"
++
++#ifdef INT128_MAX
++#include "arch_64/arch_intrinsics.h"
++#else
++#include "arch_32/arch_intrinsics.h"
++#endif
++
++#if (ARCH_WORD_BITS == 64)
++typedef uint64_t word_t, mask_t;
++typedef uint128_t dword_t;
++typedef int32_t hsword_t;
++typedef int64_t sword_t;
++typedef int128_t dsword_t;
++#elif (ARCH_WORD_BITS == 32)
++typedef uint32_t word_t, mask_t;
++typedef uint64_t dword_t;
++typedef int16_t hsword_t;
++typedef int32_t sword_t;
++typedef int64_t dsword_t;
++#else
++#error "For now, we only support 32- and 64-bit architectures."
++#endif
++
++/*
++ * Scalar limbs are keyed off of the API word size instead of the arch word
++ * size.
++ */
++#if C448_WORD_BITS == 64
++#define SC_LIMB(x) (x)
++#elif C448_WORD_BITS == 32
++#define SC_LIMB(x) ((uint32_t)(x)), ((x) >> 32)
++#else
++#error "For now we only support 32- and 64-bit architectures."
++#endif
++
++#if C448_WORD_BITS == 64
++#define value_barrier_c448(x) value_barrier_64(x)
++#elif C448_WORD_BITS == 32
++#define value_barrier_c448(x) value_barrier_32(x)
++#endif
++
++/*
++ * The plan on booleans: The external interface uses c448_bool_t, but this
++ * might be a different size than our particular arch's word_t (and thus
++ * mask_t).  Also, the caller isn't guaranteed to pass it as nonzero.  So
++ * bool_to_mask converts word sizes and checks nonzero. On the flip side,
++ * mask_t is always -1 or 0, but it might be a different size than
++ * c448_bool_t. On the third hand, we have success vs boolean types, but
++ * that's handled in common.h: it converts between c448_bool_t and
++ * c448_error_t.
++ */
++static ossl_inline c448_bool_t mask_to_bool(mask_t m)
++{
++    return (c448_sword_t)(sword_t)m;
++}
++
++static ossl_inline mask_t bool_to_mask(c448_bool_t m)
++{
++    /* On most arches this will be optimized to a simple cast. */
++    mask_t ret = 0;
++    unsigned int i;
++    unsigned int limit = sizeof(c448_bool_t) / sizeof(mask_t);
++
++    if (limit < 1)
++        limit = 1;
++    for (i = 0; i < limit; i++)
++        ret |= ~word_is_zero(m >> (i * 8 * sizeof(word_t)));
++
++    return ret;
++}
++
++#endif /* OSSL_CRYPTO_EC_CURVE448_WORD_H */
+diff --git a/crypto/curve448/x448.c b/crypto/curve448/x448.c
+new file mode 100644
+index 0000000..38770d9
+--- /dev/null
++++ b/crypto/curve448/x448.c
+@@ -0,0 +1,143 @@
++/*
++ * Copyright 2017-2024 The OpenSSL Project Authors. All Rights Reserved.
++ * Copyright 2015-2016 Cryptography Research, Inc.
++ *
++ * Licensed under the Apache License 2.0 (the "License").  You may not use
++ * this file except in compliance with the License.  You can obtain a copy
++ * in the file LICENSE in the source distribution or at
++ * https://www.openssl.org/source/license.html
++ *
++ * Originally written by Mike Hamburg
++ */
++
++/*
++ * The X448 function of OpenSSL 3.6's crypto/ec/curve448/curve448.c, with its
++ * public key computed as X448(k, 5) (RFC 7748, section 6.2).
++ */
++
++#include <openssl/curve448.h>
++#include <openssl/rand.h>
++
++#include "word.h"
++#include "field.h"
++
++#define COFACTOR 4
++
++#define EDWARDS_D (-39081)
++
++/* Inverse. */
++static void gf_invert(gf y, const gf x, int assert_nonzero)
++{
++    mask_t ret;
++    gf t1, t2;
++
++    ossl_gf_sqr(t1, x); /* o^2 */
++    ret = gf_isr(t2, t1); /* +-1/sqrt(o^2) = +-1/o */
++    (void)ret;
++    if (assert_nonzero)
++        assert(ret);
++    ossl_gf_sqr(t1, t2);
++    ossl_gf_mul(t2, t1, x); /* not direct to y in case of alias. */
++    gf_copy(y, t2);
++}
++
++static c448_error_t
++ossl_x448_int(uint8_t out[X_PUBLIC_BYTES],
++    const uint8_t base[X_PUBLIC_BYTES],
++    const uint8_t scalar[X_PRIVATE_BYTES])
++{
++    gf x1, x2, z2, x3, z3, t1, t2;
++    int t;
++    mask_t swap = 0;
++    mask_t nz;
++
++    (void)gf_deserialize(x1, base, 1, 0);
++    gf_copy(x2, ONE);
++    gf_copy(z2, ZERO);
++    gf_copy(x3, x1);
++    gf_copy(z3, ONE);
++
++    for (t = X_PRIVATE_BITS - 1; t >= 0; t--) {
++        uint8_t sb = scalar[t / 8];
++        mask_t k_t;
++
++        /* Scalar conditioning */
++        if (t / 8 == 0)
++            sb &= -(uint8_t)COFACTOR;
++        else if (t == X_PRIVATE_BITS - 1)
++            sb = -1;
++
++        k_t = (sb >> (t % 8)) & 1;
++        k_t = 0 - k_t; /* set to all 0s or all 1s */
++
++        swap ^= k_t;
++        gf_cond_swap(x2, x3, swap);
++        gf_cond_swap(z2, z3, swap);
++        swap = k_t;
++
++        /*
++         * The "_nr" below skips coefficient reduction. In the following
++         * comments, "2+e" is saying that the coefficients are at most 2+epsilon
++         * times the reduction limit.
++         */
++        gf_add_nr(t1, x2, z2); /* A = x2 + z2 */ /* 2+e */
++        gf_sub_nr(t2, x2, z2); /* B = x2 - z2 */ /* 3+e */
++        gf_sub_nr(z2, x3, z3); /* D = x3 - z3 */ /* 3+e */
++        ossl_gf_mul(x2, t1, z2); /* DA */
++        gf_add_nr(z2, z3, x3); /* C = x3 + z3 */ /* 2+e */
++        ossl_gf_mul(x3, t2, z2); /* CB */
++        gf_sub_nr(z3, x2, x3); /* DA-CB */ /* 3+e */
++        ossl_gf_sqr(z2, z3); /* (DA-CB)^2 */
++        ossl_gf_mul(z3, x1, z2); /* z3 = x1(DA-CB)^2 */
++        gf_add_nr(z2, x2, x3); /* (DA+CB) */ /* 2+e */
++        ossl_gf_sqr(x3, z2); /* x3 = (DA+CB)^2 */
++
++        ossl_gf_sqr(z2, t1); /* AA = A^2 */
++        ossl_gf_sqr(t1, t2); /* BB = B^2 */
++        ossl_gf_mul(x2, z2, t1); /* x2 = AA*BB */
++        gf_sub_nr(t2, z2, t1); /* E = AA-BB */ /* 3+e */
++
++        gf_mulw(t1, t2, -EDWARDS_D); /* E*-d = a24*E */
++        gf_add_nr(t1, t1, z2); /* AA + a24*E */ /* 2+e */
++        ossl_gf_mul(z2, t2, t1); /* z2 = E(AA+a24*E) */
++    }
++
++    /* Finish */
++    gf_cond_swap(x2, x3, swap);
++    gf_cond_swap(z2, z3, swap);
++    gf_invert(z2, z2, 0);
++    ossl_gf_mul(x1, x2, z2);
++    gf_serialize(out, x1, 1);
++    nz = ~gf_eq(x1, ZERO);
++
++    OPENSSL_cleanse(x1, sizeof(x1));
++    OPENSSL_cleanse(x2, sizeof(x2));
++    OPENSSL_cleanse(z2, sizeof(z2));
++    OPENSSL_cleanse(x3, sizeof(x3));
++    OPENSSL_cleanse(z3, sizeof(z3));
++    OPENSSL_cleanse(t1, sizeof(t1));
++    OPENSSL_cleanse(t2, sizeof(t2));
++
++    return c448_succeed_if(mask_to_bool(nz));
++}
++
++void X448_keypair(uint8_t out_public_value[56], uint8_t out_private_key[56])
++{
++    RAND_bytes(out_private_key, 56);
++    X448_public_from_private(out_public_value, out_private_key);
++}
++
++int X448(uint8_t out_shared_key[56], const uint8_t private_key[56],
++    const uint8_t peer_public_value[56])
++{
++    return ossl_x448_int(out_shared_key, peer_public_value, private_key)
++        == C448_SUCCESS;
++}
++
++void X448_public_from_private(uint8_t out_public_value[56],
++    const uint8_t private_key[56])
++{
++    static const uint8_t kBasePoint[56] = { 5 };
++
++    (void)ossl_x448_int(out_public_value, kBasePoint, private_key);
++}
+diff --git a/gen/sources.bzl b/gen/sources.bzl
+index 8b57aa8..e3942be 100644
+--- a/gen/sources.bzl
++++ b/gen/sources.bzl
+@@ -369,6 +369,10 @@ crypto_sources = [
+     "crypto/curve25519/curve25519.cc",
+     "crypto/curve25519/curve25519_64_adx.cc",
+     "crypto/curve25519/spake25519.cc",
++    "crypto/curve448/arch_32/f_impl32.c",
++    "crypto/curve448/arch_64/f_impl64.c",
++    "crypto/curve448/f_generic.c",
++    "crypto/curve448/x448.c",
+     "crypto/des/des.cc",
+     "crypto/dh/dh_asn1.cc",
+     "crypto/dh/params.cc",
+@@ -561,6 +565,7 @@ crypto_headers = [
+     "include/openssl/crypto.h",
+     "include/openssl/ctrdrbg.h",
+     "include/openssl/curve25519.h",
++    "include/openssl/curve448.h",
+     "include/openssl/des.h",
+     "include/openssl/dh.h",
+     "include/openssl/digest.h",
+@@ -640,6 +645,14 @@ crypto_internal_headers = [
+     "crypto/cpu_arm_linux.h",
+     "crypto/curve25519/curve25519_tables.h",
+     "crypto/curve25519/internal.h",
++    "crypto/curve448/arch_32/arch_intrinsics.h",
++    "crypto/curve448/arch_32/f_impl.h",
++    "crypto/curve448/arch_64/arch_intrinsics.h",
++    "crypto/curve448/arch_64/f_impl.h",
++    "crypto/curve448/curve448utils.h",
++    "crypto/curve448/field.h",
++    "crypto/curve448/internal.h",
++    "crypto/curve448/word.h",
+     "crypto/des/internal.h",
+     "crypto/dsa/internal.h",
+     "crypto/ec/internal.h",
+diff --git a/gen/sources.cmake b/gen/sources.cmake
+index 9acba30..10a7324 100644
+--- a/gen/sources.cmake
++++ b/gen/sources.cmake
+@@ -387,6 +387,10 @@ set(
+   crypto/curve25519/curve25519.cc
+   crypto/curve25519/curve25519_64_adx.cc
+   crypto/curve25519/spake25519.cc
++  crypto/curve448/arch_32/f_impl32.c
++  crypto/curve448/arch_64/f_impl64.c
++  crypto/curve448/f_generic.c
++  crypto/curve448/x448.c
+   crypto/des/des.cc
+   crypto/dh/dh_asn1.cc
+   crypto/dh/params.cc
+@@ -581,6 +585,7 @@ set(
+   include/openssl/crypto.h
+   include/openssl/ctrdrbg.h
+   include/openssl/curve25519.h
++  include/openssl/curve448.h
+   include/openssl/des.h
+   include/openssl/dh.h
+   include/openssl/digest.h
+@@ -662,6 +667,14 @@ set(
+   crypto/cpu_arm_linux.h
+   crypto/curve25519/curve25519_tables.h
+   crypto/curve25519/internal.h
++  crypto/curve448/arch_32/arch_intrinsics.h
++  crypto/curve448/arch_32/f_impl.h
++  crypto/curve448/arch_64/arch_intrinsics.h
++  crypto/curve448/arch_64/f_impl.h
++  crypto/curve448/curve448utils.h
++  crypto/curve448/field.h
++  crypto/curve448/internal.h
++  crypto/curve448/word.h
+   crypto/des/internal.h
+   crypto/dsa/internal.h
+   crypto/ec/internal.h
+diff --git a/gen/sources.gni b/gen/sources.gni
+index 8b13bb5..29e150d 100644
+--- a/gen/sources.gni
++++ b/gen/sources.gni
+@@ -369,6 +369,10 @@ crypto_sources = [
+   "crypto/curve25519/curve25519.cc",
+   "crypto/curve25519/curve25519_64_adx.cc",
+   "crypto/curve25519/spake25519.cc",
++  "crypto/curve448/arch_32/f_impl32.c",
++  "crypto/curve448/arch_64/f_impl64.c",
++  "crypto/curve448/f_generic.c",
++  "crypto/curve448/x448.c",
+   "crypto/des/des.cc",
+   "crypto/dh/dh_asn1.cc",
+   "crypto/dh/params.cc",
+@@ -561,6 +565,7 @@ crypto_headers = [
+   "include/openssl/crypto.h",
+   "include/openssl/ctrdrbg.h",
+   "include/openssl/curve25519.h",
++  "include/openssl/curve448.h",
+   "include/openssl/des.h",
+   "include/openssl/dh.h",
+   "include/openssl/digest.h",
+@@ -640,6 +645,14 @@ crypto_internal_headers = [
+   "crypto/cpu_arm_linux.h",
+   "crypto/curve25519/curve25519_tables.h",
+   "crypto/curve25519/internal.h",
++  "crypto/curve448/arch_32/arch_intrinsics.h",
++  "crypto/curve448/arch_32/f_impl.h",
++  "crypto/curve448/arch_64/arch_intrinsics.h",
++  "crypto/curve448/arch_64/f_impl.h",
++  "crypto/curve448/curve448utils.h",
++  "crypto/curve448/field.h",
++  "crypto/curve448/internal.h",
++  "crypto/curve448/word.h",
+   "crypto/des/internal.h",
+   "crypto/dsa/internal.h",
+   "crypto/ec/internal.h",
+diff --git a/gen/sources.json b/gen/sources.json
+index 92e375e..96fdcca 100644
+--- a/gen/sources.json
++++ b/gen/sources.json
+@@ -353,6 +353,10 @@
+       "crypto/curve25519/curve25519.cc",
+       "crypto/curve25519/curve25519_64_adx.cc",
+       "crypto/curve25519/spake25519.cc",
++      "crypto/curve448/arch_32/f_impl32.c",
++      "crypto/curve448/arch_64/f_impl64.c",
++      "crypto/curve448/f_generic.c",
++      "crypto/curve448/x448.c",
+       "crypto/des/des.cc",
+       "crypto/dh/dh_asn1.cc",
+       "crypto/dh/params.cc",
+@@ -544,6 +548,7 @@
+       "include/openssl/crypto.h",
+       "include/openssl/ctrdrbg.h",
+       "include/openssl/curve25519.h",
++      "include/openssl/curve448.h",
+       "include/openssl/des.h",
+       "include/openssl/dh.h",
+       "include/openssl/digest.h",
+@@ -622,6 +627,14 @@
+       "crypto/cpu_arm_linux.h",
+       "crypto/curve25519/curve25519_tables.h",
+       "crypto/curve25519/internal.h",
++      "crypto/curve448/arch_32/arch_intrinsics.h",
++      "crypto/curve448/arch_32/f_impl.h",
++      "crypto/curve448/arch_64/arch_intrinsics.h",
++      "crypto/curve448/arch_64/f_impl.h",
++      "crypto/curve448/curve448utils.h",
++      "crypto/curve448/field.h",
++      "crypto/curve448/internal.h",
++      "crypto/curve448/word.h",
+       "crypto/des/internal.h",
+       "crypto/dsa/internal.h",
+       "crypto/ec/internal.h",
+diff --git a/gen/sources.mk b/gen/sources.mk
+index fa0b051..ee8c4a8 100644
+--- a/gen/sources.mk
++++ b/gen/sources.mk
+@@ -361,6 +361,10 @@ boringssl_crypto_sources := \
+   crypto/curve25519/curve25519.cc \
+   crypto/curve25519/curve25519_64_adx.cc \
+   crypto/curve25519/spake25519.cc \
++  crypto/curve448/arch_32/f_impl32.c \
++  crypto/curve448/arch_64/f_impl64.c \
++  crypto/curve448/f_generic.c \
++  crypto/curve448/x448.c \
+   crypto/des/des.cc \
+   crypto/dh/dh_asn1.cc \
+   crypto/dh/params.cc \
+@@ -552,6 +556,7 @@ boringssl_crypto_headers := \
+   include/openssl/crypto.h \
+   include/openssl/ctrdrbg.h \
+   include/openssl/curve25519.h \
++  include/openssl/curve448.h \
+   include/openssl/des.h \
+   include/openssl/dh.h \
+   include/openssl/digest.h \
+@@ -630,6 +635,14 @@ boringssl_crypto_internal_headers := \
+   crypto/cpu_arm_linux.h \
+   crypto/curve25519/curve25519_tables.h \
+   crypto/curve25519/internal.h \
++  crypto/curve448/arch_32/arch_intrinsics.h \
++  crypto/curve448/arch_32/f_impl.h \
++  crypto/curve448/arch_64/arch_intrinsics.h \
++  crypto/curve448/arch_64/f_impl.h \
++  crypto/curve448/curve448utils.h \
++  crypto/curve448/field.h \
++  crypto/curve448/internal.h \
++  crypto/curve448/word.h \
+   crypto/des/internal.h \
+   crypto/dsa/internal.h \
+   crypto/ec/internal.h \
+diff --git a/include/openssl/curve448.h b/include/openssl/curve448.h
+new file mode 100644
+index 0000000..b1b72f2
+--- /dev/null
++++ b/include/openssl/curve448.h
+@@ -0,0 +1,57 @@
++// Copyright 2026 The BoringSSL Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#ifndef OPENSSL_HEADER_CURVE448_H
++#define OPENSSL_HEADER_CURVE448_H
++
++#include <openssl/base.h>   // IWYU pragma: export
++
++#if defined(__cplusplus)
++extern "C" {
++#endif
++
++
++// X448.
++//
++// X448 is the Diffie-Hellman primitive built from Curve448. See
++// https://tools.ietf.org/html/rfc7748. This implementation is OpenSSL's
++// (crypto/ec/curve448).
++
++#define X448_PRIVATE_KEY_LEN 56
++#define X448_PUBLIC_VALUE_LEN 56
++#define X448_SHARED_KEY_LEN 56
++
++// X448_keypair sets |out_public_value| and |out_private_key| to a freshly
++// generated, public–private key pair.
++OPENSSL_EXPORT void X448_keypair(uint8_t out_public_value[56],
++                                 uint8_t out_private_key[56]);
++
++// X448 writes a shared key to |out_shared_key| that is calculated from the
++// given private key and the peer's public value. It returns one on success and
++// zero on error (an all-zero shared key, from a point of small order).
++OPENSSL_EXPORT int X448(uint8_t out_shared_key[56],
++                        const uint8_t private_key[56],
++                        const uint8_t peer_public_value[56]);
++
++// X448_public_from_private calculates a Diffie-Hellman public value from the
++// given private key and writes it to |out_public_value|.
++OPENSSL_EXPORT void X448_public_from_private(uint8_t out_public_value[56],
++                                             const uint8_t private_key[56]);
++
++
++#if defined(__cplusplus)
++}  // extern C
++#endif
++
++#endif  // OPENSSL_HEADER_CURVE448_H
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index cb052f1..3391c14 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -2607,6 +2607,7 @@ OPENSSL_EXPORT size_t SSL_CTX_get_num_tickets(const SSL_CTX *ctx);
+ #define SSL_GROUP_SECP384R1 24
+ #define SSL_GROUP_SECP521R1 25
+ #define SSL_GROUP_X25519 29
++#define SSL_GROUP_X448 30
+ #define SSL_GROUP_X25519_MLKEM768 0x11ec
+ #define SSL_GROUP_X25519_KYBER768_DRAFT00 0x6399
+ #define SSL_GROUP_MLKEM1024 0x0202
+diff --git a/ssl/extensions.cc b/ssl/extensions.cc
+index f2ac91f..e93b762 100644
+--- a/ssl/extensions.cc
++++ b/ssl/extensions.cc
+@@ -2518,10 +2518,10 @@ static bool ext_early_data_add_serverhello(SSL_HANDSHAKE *hs, CBB *out) {
+ 
+ // ssl_placeholder_key_share_len returns the length of the key_exchange a client
+ // sends for |group_id|, a group this library does not implement (an implemented
+-// one, FFDHE, X25519MLKEM768, X25519Kyber768Draft00 and MLKEM1024 included,
+-// gets a generated share instead), and sets |*out_ec_point| when it begins
+-// with an uncompressed EC point, 0x04 then both coordinates. An unknown group
+-// gets 32 bytes, the size of an X25519 share.
++// one, X448, FFDHE, X25519MLKEM768, X25519Kyber768Draft00 and MLKEM1024
++// included, gets a generated share instead), and sets |*out_ec_point| when it
++// begins with an uncompressed EC point, 0x04 then both coordinates. An unknown
++// group gets 32 bytes, the size of an X25519 share.
+ static size_t ssl_placeholder_key_share_len(uint16_t group_id,
+                                             bool *out_ec_point) {
+   *out_ec_point = false;
+@@ -2537,8 +2537,6 @@ static size_t ssl_placeholder_key_share_len(uint16_t group_id,
+     case 0x0021:  // brainpoolP512r1tls13
+       *out_ec_point = true;
+       return 129;
+-    case 0x001e:  // x448
+-      return 56;
+     case 0x0200:  // MLKEM512
+       return 800;
+     case 0x0201:  // MLKEM768
+diff --git a/ssl/internal.h b/ssl/internal.h
+index 9d2366c..36612de 100644
+--- a/ssl/internal.h
++++ b/ssl/internal.h
+@@ -924,7 +924,7 @@ struct NamedGroup {
+ Span<const NamedGroup> NamedGroups();
+ 
+ // kNumNamedGroups is the number of supported groups.
+-constexpr size_t kNumNamedGroups = 12u;
++constexpr size_t kNumNamedGroups = 13u;
+ 
+ // DefaultSupportedGroupIds returns the list of IDs for the default groups that
+ // are supported when the caller hasn't explicitly configured supported groups.
+diff --git a/ssl/ssl_key_share.cc b/ssl/ssl_key_share.cc
+index 3d92363..c0e24a5 100644
+--- a/ssl/ssl_key_share.cc
++++ b/ssl/ssl_key_share.cc
+@@ -23,6 +23,7 @@
+ #include <openssl/bn.h>
+ #include <openssl/bytestring.h>
+ #include <openssl/curve25519.h>
++#include <openssl/curve448.h>
+ #include <openssl/dh.h>
+ #include <openssl/ec.h>
+ #include <openssl/err.h>
+@@ -194,6 +195,60 @@ class X25519KeyShare : public SSLKeyShare {
+   uint8_t private_key_[32];
+ };
+ 
++class X448KeyShare : public SSLKeyShare {
++ public:
++  X448KeyShare() {}
++
++  uint16_t GroupID() const override { return SSL_GROUP_X448; }
++
++  bool Generate(CBB *out) override {
++    uint8_t public_key[56];
++    X448_keypair(public_key, private_key_);
++    return !!CBB_add_bytes(out, public_key, sizeof(public_key));
++  }
++
++  bool Encap(CBB *out_ciphertext, Array<uint8_t> *out_secret,
++             uint8_t *out_alert, Span<const uint8_t> peer_key) override {
++    *out_alert = SSL_AD_INTERNAL_ERROR;
++    return Generate(out_ciphertext) && Decap(out_secret, out_alert, peer_key);
++  }
++
++  bool Decap(Array<uint8_t> *out_secret, uint8_t *out_alert,
++             Span<const uint8_t> ciphertext) override {
++    *out_alert = SSL_AD_INTERNAL_ERROR;
++
++    Array<uint8_t> secret;
++    if (!secret.InitForOverwrite(56)) {
++      return false;
++    }
++
++    if (ciphertext.size() != 56 ||  //
++        !X448(secret.data(), private_key_, ciphertext.data())) {
++      *out_alert = SSL_AD_ILLEGAL_PARAMETER;
++      OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_ECPOINT);
++      return false;
++    }
++
++    *out_secret = std::move(secret);
++    return true;
++  }
++
++  bool SerializePrivateKey(CBB *out) override {
++    return CBB_add_bytes(out, private_key_, sizeof(private_key_));
++  }
++
++  bool DeserializePrivateKey(CBS *in) override {
++    if (CBS_len(in) != sizeof(private_key_) ||
++        !CBS_copy_bytes(in, private_key_, sizeof(private_key_))) {
++      return false;
++    }
++    return true;
++  }
++
++ private:
++  uint8_t private_key_[56];
++};
++
+ // draft-tls-westerbaan-xyber768d00-03
+ class X25519Kyber768KeyShare : public SSLKeyShare {
+  public:
+@@ -762,6 +817,7 @@ constexpr NamedGroup kNamedGroups[] = {
+     {NID_secp384r1, SSL_GROUP_SECP384R1, "P-384", "secp384r1"},
+     {NID_secp521r1, SSL_GROUP_SECP521R1, "P-521", "secp521r1"},
+     {NID_X25519, SSL_GROUP_X25519, "X25519", "x25519"},
++    {NID_X448, SSL_GROUP_X448, "X448", "x448"},
+     {NID_X25519Kyber768Draft00, SSL_GROUP_X25519_KYBER768_DRAFT00,
+      "X25519Kyber768Draft00", ""},
+     {NID_X25519MLKEM768, SSL_GROUP_X25519_MLKEM768, "X25519MLKEM768", ""},
+@@ -799,6 +855,8 @@ UniquePtr<SSLKeyShare> SSLKeyShare::Create(uint16_t group_id) {
+       return MakeUnique<ECKeyShare>(EC_group_p521(), SSL_GROUP_SECP521R1);
+     case SSL_GROUP_X25519:
+       return MakeUnique<X25519KeyShare>();
++    case SSL_GROUP_X448:
++      return MakeUnique<X448KeyShare>();
+     case SSL_GROUP_X25519_KYBER768_DRAFT00:
+       return MakeUnique<X25519Kyber768KeyShare>();
+     case SSL_GROUP_X25519_MLKEM768:

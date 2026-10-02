@@ -754,6 +754,8 @@ impl KeyShare {
 
     pub const X25519: KeyShare = KeyShare(ffi::SSL_GROUP_X25519 as _);
 
+    pub const X448: KeyShare = KeyShare(ffi::SSL_GROUP_X448 as _);
+
     pub const X25519_MLKEM768: KeyShare = KeyShare(ffi::SSL_GROUP_X25519_MLKEM768 as _);
 
     pub const X25519_KYBER768_DRAFT00: KeyShare =
