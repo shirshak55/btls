@@ -2059,9 +2059,11 @@ impl SslContextBuilder {
     }
 
     /// Sets the max_fragment_length mode (RFC 6066) clients send as given, or none if zero.
-    /// Once the server echoes a mode of 1 to 4, records sent are at most 2^(8 + mode) bytes; a
-    /// server echoing another value fails the handshake. Servers echo a client's mode, and
-    /// send records no larger, only when their server extension order lists the extension.
+    /// Once the server echoes a mode of 1 to 4, records sent are at most 2^(8 + mode) bytes,
+    /// and a larger one received fails the connection with a record_overflow alert; a server
+    /// echoing another value fails the handshake. Servers echo a client's mode, and then hold
+    /// records either way to the same length, only when their server extension order lists
+    /// the extension.
     #[corresponds(SSL_CTX_set_max_fragment_length)]
     pub fn set_max_fragment_length(&mut self, mode: u8) {
         unsafe { ffi::SSL_CTX_set_max_fragment_length(self.as_ptr(), mode) }
@@ -3469,6 +3471,13 @@ impl SslRef {
     #[corresponds(SSL_set_tmp_dh)]
     pub fn set_tmp_dh(&mut self, dh: &DhRef<Params>) -> Result<(), ErrorStack> {
         unsafe { cvt(ffi::SSL_set_tmp_dh(self.as_ptr(), dh.as_ptr())) }
+    }
+
+    /// Accepts, as a client, a TLS 1.2 DHE group of at least `bits` bits instead of 2048,
+    /// never one below 512 bits.
+    #[corresponds(SSL_set_min_dhe_bits)]
+    pub fn set_min_dhe_bits(&mut self, bits: u16) -> Result<(), ErrorStack> {
+        unsafe { cvt(ffi::SSL_set_min_dhe_bits(self.as_ptr(), bits)) }
     }
 
     /// Like [`SslContextBuilder::set_tmp_ecdh`].

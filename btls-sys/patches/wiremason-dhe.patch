@@ -1,8 +1,8 @@
 diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
-index eb62bed..6b96db0 100644
+index 9617ac4..1ba31f7 100644
 --- a/include/openssl/ssl.h
 +++ b/include/openssl/ssl.h
-@@ -5988,10 +5988,13 @@ OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_expansion(SSL *ssl);
+@@ -5990,12 +5990,22 @@ OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_expansion(SSL *ssl);
  // SSL_get_server_tmp_key returns zero.
  OPENSSL_EXPORT int SSL_get_server_tmp_key(SSL *ssl, EVP_PKEY **out_key);
  
@@ -17,9 +17,18 @@ index eb62bed..6b96db0 100644
 +// SSL_set_tmp_dh behaves like |SSL_CTX_set_tmp_dh| but configures |ssl|.
  OPENSSL_EXPORT int SSL_set_tmp_dh(SSL *ssl, const DH *dh);
  
++// SSL_set_min_dhe_bits configures |ssl|, a client, to accept in a TLS 1.2 DHE
++// ServerKeyExchange only a group whose prime has at least |bits| bits, 2048 by
++// default. A group below 512 bits, OpenSSL's minimum, or above
++// |OPENSSL_DH_MAX_MODULUS_BITS| is refused either way. It returns one on
++// success and zero if |ssl|'s configuration was shed.
++OPENSSL_EXPORT int SSL_set_min_dhe_bits(SSL *ssl, uint16_t bits);
++
  // SSL_CTX_set_tmp_dh_callback does nothing.
+ OPENSSL_EXPORT void SSL_CTX_set_tmp_dh_callback(
+     SSL_CTX *ctx, DH *(*cb)(SSL *ssl, int is_export, int keylength));
 diff --git a/ssl/handshake_client.cc b/ssl/handshake_client.cc
-index f589a6d..8a88340 100644
+index f589a6d..e801d85 100644
 --- a/ssl/handshake_client.cc
 +++ b/ssl/handshake_client.cc
 @@ -1496,9 +1496,11 @@ static bool ssl_send_dhe_client_key_exchange(SSL_HANDSHAKE *hs, CBB *body,
@@ -27,12 +36,12 @@ index f589a6d..8a88340 100644
    }
  
 -  // Refuse groups weaker than 2048 bits, and bound the work a large one costs.
-+  // Accept every group BoringSSL computes with, down to OpenSSL's 512-bit
-+  // minimum: whether a weak one will do is left to the client a server
-+  // reproducing it answers.
++  // Refuse groups below the configured size, never below OpenSSL's 512-bit
++  // minimum, and bound the work a large one costs.
    const unsigned bits = BN_num_bits(p.get());
 -  if (bits < 2048 || bits > 8192 || !BN_is_odd(p.get()) ||
-+  if (bits < 512 || bits > OPENSSL_DH_MAX_MODULUS_BITS || !BN_is_odd(p.get()) ||
++  if (bits < std::max(512u, unsigned{hs->config->min_dhe_bits}) ||
++      bits > OPENSSL_DH_MAX_MODULUS_BITS || !BN_is_odd(p.get()) ||
        BN_cmp_word(g.get(), 1) <= 0 || BN_cmp(g.get(), p.get()) >= 0) {
      OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_DH_P_LENGTH);
      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
@@ -122,7 +131,7 @@ index 0ffc246..98b9133 100644
      // Parse the ClientKeyExchange.
      CBS ciphertext;
 diff --git a/ssl/internal.h b/ssl/internal.h
-index 8306bc3..79cbdce 100644
+index 3bf4328..f08337a 100644
 --- a/ssl/internal.h
 +++ b/ssl/internal.h
 @@ -35,6 +35,7 @@
@@ -144,7 +153,7 @@ index 8306bc3..79cbdce 100644
    // peer_key is the peer's ECDH key for a TLS 1.2 client.
    Array<uint8_t> peer_key;
  
-@@ -3477,6 +3482,10 @@ struct SSL_CONFIG {
+@@ -3481,6 +3486,14 @@ struct SSL_CONFIG {
    // PSK-based key exchanges.
    UniquePtr<char> psk_identity_hint;
  
@@ -152,10 +161,14 @@ index 8306bc3..79cbdce 100644
 +  // suites, which are negotiated only with one (see |SSL_set_tmp_dh|).
 +  UniquePtr<DH> tmp_dh;
 +
++  // Client-only: min_dhe_bits is the size of the smallest Diffie-Hellman group a
++  // TLS 1.2 DHE ServerKeyExchange may name (see |SSL_set_min_dhe_bits|).
++  uint16_t min_dhe_bits = 2048;
++
    unsigned (*psk_client_callback)(SSL *ssl, const char *hint, char *identity,
                                    unsigned max_identity_len, uint8_t *psk,
                                    unsigned max_psk_len) = nullptr;
-@@ -4172,6 +4181,10 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
+@@ -4176,6 +4189,10 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
    // PSK-based key exchanges.
    bssl::UniquePtr<char> psk_identity_hint;
  
@@ -167,7 +180,7 @@ index 8306bc3..79cbdce 100644
                                    unsigned max_identity_len, uint8_t *psk,
                                    unsigned max_psk_len) = nullptr;
 diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
-index 2d4b36f..7cbc640 100644
+index 2d4b36f..b6353de 100644
 --- a/ssl/ssl_lib.cc
 +++ b/ssl/ssl_lib.cc
 @@ -570,6 +570,12 @@ SSL *SSL_new(SSL_CTX *ctx) {
@@ -183,7 +196,7 @@ index 2d4b36f..7cbc640 100644
    ssl->config->psk_client_callback = ctx->psk_client_callback;
    ssl->config->psk_server_callback = ctx->psk_server_callback;
  
-@@ -2107,9 +2113,21 @@ int SSL_set1_server_supported_groups_hint(SSL *ssl,
+@@ -2107,9 +2113,29 @@ int SSL_set1_server_supported_groups_hint(SSL *ssl,
    return ssl->config->server_supported_groups_hint.CopyFrom(span);
  }
  
@@ -196,13 +209,21 @@ index 2d4b36f..7cbc640 100644
 +int SSL_CTX_set_tmp_dh(SSL_CTX *ctx, const DH *dh) {
 +  return set_tmp_dh(&ctx->tmp_dh, dh);
 +}
- 
--int SSL_set_tmp_dh(SSL *ssl, const DH *dh) { return 1; }
++
 +int SSL_set_tmp_dh(SSL *ssl, const DH *dh) {
 +  if (!ssl->config) {
 +    return 0;
 +  }
 +  return set_tmp_dh(&ssl->config->tmp_dh, dh);
++}
+ 
+-int SSL_set_tmp_dh(SSL *ssl, const DH *dh) { return 1; }
++int SSL_set_min_dhe_bits(SSL *ssl, uint16_t bits) {
++  if (!ssl->config) {
++    return 0;
++  }
++  ssl->config->min_dhe_bits = bits;
++  return 1;
 +}
  
  STACK_OF(SSL_CIPHER) *SSL_CTX_get_ciphers(const SSL_CTX *ctx) {
