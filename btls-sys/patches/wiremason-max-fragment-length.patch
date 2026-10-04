@@ -1,19 +1,19 @@
 diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
-index 3391c14..9617ac4 100644
+index 9a3da79..e062bf6 100644
 --- a/include/openssl/ssl.h
 +++ b/include/openssl/ssl.h
-@@ -5679,6 +5679,17 @@ OPENSSL_EXPORT void SSL_set_post_handshake_auth(SSL *ssl, int enabled);
+@@ -5681,6 +5681,17 @@ OPENSSL_EXPORT void SSL_set_post_handshake_auth(SSL *ssl, int enabled);
  // sent after the server answers with its own limit are no larger than it allows.
  OPENSSL_EXPORT void SSL_CTX_set_record_size_limit(SSL_CTX *ctx, uint16_t limit);
  
 +// SSL_CTX_set_max_fragment_length configures clients on |ctx| to send the
-+// max_fragment_length extension (RFC 6066) with |mode| as given, or none if
-+// zero. Once the server echoes a mode of 1 to 4, records sent are no larger
-+// than 2^(8 + mode) bytes, and a larger one received fails the connection with
-+// a record_overflow alert; a server echoing any other value fails the
-+// handshake. Servers echo a client's mode of 1 to 4, and then hold records
-+// either way to the same length, only when
-+// |SSL_CTX_set_server_extension_order| lists the extension.
++// max_fragment_length extension (RFC 6066) with |mode| as given, an invalid one
++// such as zero included. Once the server echoes a mode of 1 to 4, records sent
++// are no larger than 2^(8 + mode) bytes, and a larger one received fails the
++// connection with a record_overflow alert; a server echoing any other value,
++// or record_size_limit too (RFC 8449, section 5), fails the handshake. Servers
++// echo a client's mode of 1 to 4, and then hold records either way to the same
++// length, only when |SSL_CTX_set_server_extension_order| lists the extension.
 +OPENSSL_EXPORT void SSL_CTX_set_max_fragment_length(SSL_CTX *ctx,
 +                                                    uint8_t mode);
 +
@@ -35,7 +35,7 @@ index f31eaae..acacda5 100644
  // 0xffa5 which is part of the Private Use section of the registry, and it
  // collides with TLS-LTS and, based on scans, something else too (though this
 diff --git a/ssl/extensions.cc b/ssl/extensions.cc
-index e93b762..f479b52 100644
+index e93b762..3a05525 100644
 --- a/ssl/extensions.cc
 +++ b/ssl/extensions.cc
 @@ -4385,6 +4385,89 @@ static bool ext_record_size_limit_parse_serverhello(SSL_HANDSHAKE *hs,
@@ -60,7 +60,7 @@ index e93b762..f479b52 100644
 +    const SSL_HANDSHAKE *hs, CBB *out, CBB *out_compressible,
 +    ssl_client_hello_type_t type) {
 +  // QUIC has its own framing and must not negotiate a fragment length.
-+  if (hs->config->max_fragment_length == 0 || SSL_is_quic(hs->ssl) ||
++  if (!hs->config->send_max_fragment_length || SSL_is_quic(hs->ssl) ||
 +      type == ssl_client_hello_inner) {
 +    return true;
 +  }
@@ -285,9 +285,26 @@ index e93b762..f479b52 100644
  
      uint8_t alert = SSL_AD_DECODE_ERROR;
      if (!ext->parse_serverhello(hs, &alert, &extension)) {
-@@ -5330,7 +5420,7 @@ static bool ssl_scan_serverhello_tlsext(SSL_HANDSHAKE *hs, const CBS *cbs,
+@@ -5329,8 +5419,24 @@ static bool ssl_scan_serverhello_tlsext(SSL_HANDSHAKE *hs, const CBS *cbs,
+     }
    }
  
++  // A server echoing both max_fragment_length and record_size_limit is a fatal
++  // error. See RFC 8449, section 5.
++  unsigned max_fragment_length, record_size_limit;
++  if (tls_extension_find(&max_fragment_length,
++                         TLSEXT_TYPE_max_fragment_length) != nullptr &&
++      tls_extension_find(&record_size_limit, TLSEXT_TYPE_record_size_limit) !=
++          nullptr &&
++      (received & (uint64_t{1} << max_fragment_length)) &&
++      (received & (uint64_t{1} << record_size_limit))) {
++    OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_EXTENSION);
++    ERR_add_error_dataf("extension %u",
++                        unsigned{TLSEXT_TYPE_max_fragment_length});
++    *out_alert = SSL_AD_ILLEGAL_PARAMETER;
++    return false;
++  }
++
    for (size_t i = 0; i < kNumExtensions; i++) {
 -    if (!(received & (1u << i))) {
 +    if (!(received & (uint64_t{1} << i))) {
@@ -295,7 +312,7 @@ index e93b762..f479b52 100644
        // parameter.
        uint8_t alert = SSL_AD_DECODE_ERROR;
 diff --git a/ssl/internal.h b/ssl/internal.h
-index 36612de..3bf4328 100644
+index 36612de..5a2fc64 100644
 --- a/ssl/internal.h
 +++ b/ssl/internal.h
 @@ -1836,15 +1836,15 @@ struct SSL_HANDSHAKE {
@@ -339,44 +356,48 @@ index 36612de..3bf4328 100644
    // empty_record_count is the number of consecutive empty records received.
    uint8_t empty_record_count = 0;
  
-@@ -3642,6 +3650,9 @@ struct SSL_CONFIG {
+@@ -3642,6 +3650,10 @@ struct SSL_CONFIG {
    bool renegotiation_scsv = false;
    bool post_handshake_auth = false;
    uint16_t record_size_limit = 0;
-+  // max_fragment_length is the client setting of
-+  // |SSL_CTX_set_max_fragment_length|.
++  // max_fragment_length and send_max_fragment_length are the client setting of
++  // |SSL_CTX_set_max_fragment_length|: the mode, and whether it is sent.
 +  uint8_t max_fragment_length = 0;
++  bool send_max_fragment_length = false;
    Array<uint16_t> delegated_credentials;
    int session_id_length = -1;
    int ech_grease_payload_length = -1;
-@@ -4319,6 +4330,9 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
+@@ -4319,6 +4331,10 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
    bool renegotiation_scsv = false;
    bool post_handshake_auth = false;
    uint16_t record_size_limit = 0;
-+  // max_fragment_length is the client setting of
-+  // |SSL_CTX_set_max_fragment_length|.
++  // max_fragment_length and send_max_fragment_length are the client setting of
++  // |SSL_CTX_set_max_fragment_length|: the mode, and whether it is sent.
 +  uint8_t max_fragment_length = 0;
++  bool send_max_fragment_length = false;
    bssl::Array<uint16_t> delegated_credentials;
    int session_id_length = -1;
    int ech_grease_payload_length = -1;
 diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
-index 2036e47..2d4b36f 100644
+index 2036e47..8d978e5 100644
 --- a/ssl/ssl_lib.cc
 +++ b/ssl/ssl_lib.cc
-@@ -527,6 +527,7 @@ SSL *SSL_new(SSL_CTX *ctx) {
+@@ -527,6 +527,8 @@ SSL *SSL_new(SSL_CTX *ctx) {
    ssl->config->renegotiation_scsv = ctx->renegotiation_scsv;
    ssl->config->post_handshake_auth = ctx->post_handshake_auth;
    ssl->config->record_size_limit = ctx->record_size_limit;
 +  ssl->config->max_fragment_length = ctx->max_fragment_length;
++  ssl->config->send_max_fragment_length = ctx->send_max_fragment_length;
    ssl->config->session_id_length = ctx->session_id_length;
    ssl->config->ech_grease_payload_length = ctx->ech_grease_payload_length;
    ssl->config->ech_grease_kdf_id = ctx->ech_grease_kdf_id;
-@@ -3260,6 +3261,10 @@ void SSL_CTX_set_record_size_limit(SSL_CTX *ctx, uint16_t limit) {
+@@ -3260,6 +3262,11 @@ void SSL_CTX_set_record_size_limit(SSL_CTX *ctx, uint16_t limit) {
    ctx->record_size_limit = limit;
  }
  
 +void SSL_CTX_set_max_fragment_length(SSL_CTX *ctx, uint8_t mode) {
 +  ctx->max_fragment_length = mode;
++  ctx->send_max_fragment_length = true;
 +}
 +
  int SSL_CTX_set_session_id_length(SSL_CTX *ctx, int len) {

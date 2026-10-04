@@ -2058,10 +2058,11 @@ impl SslContextBuilder {
         unsafe { ffi::SSL_CTX_set_record_size_limit(self.as_ptr(), limit) }
     }
 
-    /// Sets the max_fragment_length mode (RFC 6066) clients send as given, or none if zero.
-    /// Once the server echoes a mode of 1 to 4, records sent are at most 2^(8 + mode) bytes,
-    /// and a larger one received fails the connection with a record_overflow alert; a server
-    /// echoing another value fails the handshake. Servers echo a client's mode, and then hold
+    /// Sets the max_fragment_length mode (RFC 6066) clients send as given, an invalid one such
+    /// as zero included. Once the server echoes a mode of 1 to 4, records sent are at most
+    /// 2^(8 + mode) bytes, and a larger one received fails the connection with a
+    /// record_overflow alert; a server echoing another value, or record_size_limit too
+    /// (RFC 8449, section 5), fails the handshake. Servers echo a client's mode, and then hold
     /// records either way to the same length, only when their server extension order lists
     /// the extension.
     #[corresponds(SSL_CTX_set_max_fragment_length)]
