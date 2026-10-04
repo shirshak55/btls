@@ -47,7 +47,7 @@ index e062bf6..d5a1901 100644
  OPENSSL_EXPORT void SSL_CTX_set_tmp_dh_callback(
      SSL_CTX *ctx, DH *(*cb)(SSL *ssl, int is_export, int keylength));
 diff --git a/ssl/handshake_client.cc b/ssl/handshake_client.cc
-index f589a6d..d4b9edb 100644
+index f589a6d..4734d4f 100644
 --- a/ssl/handshake_client.cc
 +++ b/ssl/handshake_client.cc
 @@ -441,6 +441,10 @@ static enum ssl_hs_wait_t do_start_connect(SSL_HANDSHAKE *hs) {
@@ -80,8 +80,8 @@ index f589a6d..d4b9edb 100644
    p.release();
    g.release();
 +  hs->new_session->dhe_bits = static_cast<uint16_t>(bits);
-+  // A private key as long as OpenSSL's for the group.
-+  if (!DH_set_length(dh.get(), ssl_dh_named_group_private_bits(dh.get()))) {
++  // A private key as short as the group allows (see |ssl_dh_private_bits|).
++  if (!DH_set_length(dh.get(), ssl_dh_private_bits(dh.get()))) {
 +    ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
 +    return false;
 +  }
@@ -89,7 +89,7 @@ index f589a6d..d4b9edb 100644
    // The premaster secret is the shared value without leading zero bytes. See
    // RFC 5246, section 8.1.2. |DH_compute_key| rejects an invalid peer value.
 diff --git a/ssl/handshake_server.cc b/ssl/handshake_server.cc
-index 0ffc246..ef76a06 100644
+index 0ffc246..c92c4b3 100644
 --- a/ssl/handshake_server.cc
 +++ b/ssl/handshake_server.cc
 @@ -23,6 +23,7 @@
@@ -110,18 +110,19 @@ index 0ffc246..ef76a06 100644
    if (hs->config->psk_server_callback != nullptr) {
      mask_k |= SSL_kPSK;
      mask_a |= SSL_aPSK;
-@@ -1055,7 +1059,29 @@ static enum ssl_hs_wait_t do_send_server_certificate(SSL_HANDSHAKE *hs) {
+@@ -1055,7 +1059,30 @@ static enum ssl_hs_wait_t do_send_server_certificate(SSL_HANDSHAKE *hs) {
        }
      }
  
 -    if (alg_k & SSL_kECDHE) {
 +    if (alg_k & SSL_kDHE) {
 +      // The group's prime, generator and public key, Ys padded to the prime's
-+      // length as OpenSSL pads it, its private key as long as OpenSSL's.
++      // length as OpenSSL pads it, its private key as short as the group
++      // allows (see |ssl_dh_private_bits|).
 +      hs->dhe_key.reset(DHparams_dup(hs->config->tmp_dh.get()));
 +      if (hs->dhe_key == nullptr ||
 +          !DH_set_length(hs->dhe_key.get(),
-+                         ssl_dh_named_group_private_bits(hs->dhe_key.get())) ||
++                         ssl_dh_private_bits(hs->dhe_key.get())) ||
 +          !DH_generate_key(hs->dhe_key.get())) {
 +        return ssl_hs_error;
 +      }
@@ -141,7 +142,7 @@ index 0ffc246..ef76a06 100644
        assert(hs->new_session->group_id != 0);
        UniquePtr<SSLKeyShare> ssl_key_share =
            SSLKeyShare::Create(hs->new_session->group_id);
-@@ -1436,6 +1462,35 @@ static enum ssl_hs_wait_t do_read_client_key_exchange(SSL_HANDSHAKE *hs) {
+@@ -1436,6 +1463,35 @@ static enum ssl_hs_wait_t do_read_client_key_exchange(SSL_HANDSHAKE *hs) {
        premaster_secret[i] = constant_time_select_8(
            good, decrypt_buf[padding_len + i], premaster_secret[i]);
      }
@@ -178,7 +179,7 @@ index 0ffc246..ef76a06 100644
      // Parse the ClientKeyExchange.
      CBS ciphertext;
 diff --git a/ssl/internal.h b/ssl/internal.h
-index 5a2fc64..7420ef3 100644
+index 5a2fc64..4593ac2 100644
 --- a/ssl/internal.h
 +++ b/ssl/internal.h
 @@ -35,6 +35,7 @@
@@ -193,11 +194,11 @@ index 5a2fc64..7420ef3 100644
  // it returns zero.
  size_t ssl_cipher_get_record_split_len(const SSL_CIPHER *cipher);
  
-+// ssl_dh_named_group_private_bits returns the length, in bits, OpenSSL gives
-+// the private keys of |dh|'s group when it is one of the safe-prime groups of
-+// RFC 7919 or RFC 3526, whose structure makes such short exponents safe, else
-+// zero for a full-length one.
-+unsigned ssl_dh_named_group_private_bits(const DH *dh);
++// ssl_dh_private_bits returns the length, in bits, of the private keys of
++// |dh|'s group: OpenSSL's for one of the safe-prime groups of RFC 7919 or RFC
++// 3526, one suited to the size of any other group whose prime is safe, whose
++// structure makes such short exponents safe, else zero for a full-length one.
++unsigned ssl_dh_private_bits(const DH *dh);
 +
  // ssl_choose_tls13_cipher returns an |SSL_CIPHER| corresponding with the best
  // available from |cipher_suites| compatible with |version| and |policy|. It
@@ -290,7 +291,7 @@ index ad43e77..06217f7 100644
    if (CBS_len(&session) != 0) {
      OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SSL_SESSION);
 diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
-index 8d978e5..7f31386 100644
+index 8d978e5..91fc13a 100644
 --- a/ssl/ssl_lib.cc
 +++ b/ssl/ssl_lib.cc
 @@ -31,6 +31,7 @@
@@ -314,7 +315,7 @@ index 8d978e5..7f31386 100644
    ssl->config->psk_client_callback = ctx->psk_client_callback;
    ssl->config->psk_server_callback = ctx->psk_server_callback;
  
-@@ -2108,9 +2115,113 @@ int SSL_set1_server_supported_groups_hint(SSL *ssl,
+@@ -2108,9 +2115,185 @@ int SSL_set1_server_supported_groups_hint(SSL *ssl,
    return ssl->config->server_supported_groups_hint.CopyFrom(span);
  }
  
@@ -334,8 +335,7 @@ index 8d978e5..7f31386 100644
 +  }
 +  return set_tmp_dh(&ssl->config->tmp_dh, dh);
 +}
- 
--int SSL_set_tmp_dh(SSL *ssl, const DH *dh) { return 1; }
++
 +int SSL_set_min_dhe_bits(SSL *ssl, uint16_t bits) {
 +  if (!ssl->config) {
 +    return 0;
@@ -343,12 +343,43 @@ index 8d978e5..7f31386 100644
 +  ssl->config->min_dhe_bits = bits;
 +  return 1;
 +}
-+
+ 
+-int SSL_set_tmp_dh(SSL *ssl, const DH *dh) { return 1; }
 +uint16_t SSL_SESSION_get_dhe_bits(const SSL_SESSION *session) {
 +  return session->dhe_bits;
 +}
 +
-+unsigned bssl::ssl_dh_named_group_private_bits(const DH *dh) {
++// is_safe_prime returns whether |p| is a safe prime, 2q + 1 for a prime q: q
++// passes the Miller-Rabin rounds of a random candidate, and then p is prime by
++// Pocklington's criterion with base 2, 2^(p - 1) = 1 (mod p) and 3 not
++// dividing p. An origin's group, for which this is asked, is chosen by the
++// peer that ends the connection anyway, so a composite crafted to pass would
++// weaken only what it already reads.
++static bool is_safe_prime(const BIGNUM *p) {
++  UniquePtr<BN_CTX> ctx(BN_CTX_new());
++  UniquePtr<BIGNUM> q(BN_new()), exponent(BN_new()), r(BN_new());
++  int q_prime = 0;
++  return ctx != nullptr && q != nullptr && exponent != nullptr &&
++         r != nullptr && BN_is_odd(p) && BN_rshift1(q.get(), p) &&
++         BN_primality_test(&q_prime, q.get(), BN_prime_checks_for_generation,
++                           ctx.get(), /*do_trial_division=*/1, nullptr) &&
++         q_prime && BN_mod_word(p, 3) != 0 && BN_copy(exponent.get(), p) &&
++         BN_sub_word(exponent.get(), 1) &&
++         BN_mod_exp_mont_word(r.get(), 2, exponent.get(), p, ctx.get(),
++                              nullptr) &&
++         BN_is_one(r.get());
++}
++
++// The custom groups' primes found safe or not, by SHA-256, kept for the few
++// groups a process meets, the oldest replaced first.
++static StaticMutex g_safe_primes_lock;
++static struct {
++  uint8_t prime_sha256[SHA256_DIGEST_LENGTH];
++  bool safe;
++} g_safe_primes[32];
++static size_t g_safe_primes_len = 0, g_safe_primes_next = 0;
++
++unsigned bssl::ssl_dh_private_bits(const DH *dh) {
 +  // Each group's generator is 2, and its prime is named by its SHA-256 (of its
 +  // big-endian bytes). The lengths are OpenSSL's, twice the group's security.
 +  static const struct {
@@ -413,19 +444,61 @@ index 8d978e5..7f31386 100644
 +  };
 +  const BIGNUM *p = DH_get0_p(dh);
 +  Array<uint8_t> prime;
-+  if (!BN_is_word(DH_get0_g(dh), 2) ||
-+      !prime.InitForOverwrite(BN_num_bytes(p))) {
++  if (!prime.InitForOverwrite(BN_num_bytes(p))) {
 +    return 0;
 +  }
 +  BN_bn2bin(p, prime.data());
 +  uint8_t digest[SHA256_DIGEST_LENGTH];
 +  SHA256(prime.data(), prime.size(), digest);
-+  for (const auto &group : kNamedGroups) {
-+    if (OPENSSL_memcmp(group.prime_sha256, digest, sizeof(digest)) == 0) {
-+      return group.private_bits;
++  if (BN_is_word(DH_get0_g(dh), 2)) {
++    for (const auto &group : kNamedGroups) {
++      if (OPENSSL_memcmp(group.prime_sha256, digest, sizeof(digest)) == 0) {
++        return group.private_bits;
++      }
 +    }
 +  }
-+  return 0;
++
++  // Any other group's keys are short only once its prime is known to be safe,
++  // as only then has p - 1 no small factors through which a short exponent
++  // leaks (van Oorschot and Wiener): as long as a named group's of its size
++  // has, and beyond 8192 bits twice the 256-bit security of a 15360-bit group.
++  static const struct {
++    unsigned prime_bits;
++    unsigned private_bits;
++  } kLengths[] = {{2048, 225}, {3072, 275}, {4096, 325}, {6144, 375},
++                  {8192, 400}};
++  int safe = -1;
++  {
++    MutexReadLock lock(&g_safe_primes_lock);
++    for (size_t i = 0; i < g_safe_primes_len; i++) {
++      if (OPENSSL_memcmp(g_safe_primes[i].prime_sha256, digest,
++                         sizeof(digest)) == 0) {
++        safe = g_safe_primes[i].safe;
++        break;
++      }
++    }
++  }
++  if (safe < 0) {
++    safe = is_safe_prime(p);
++    MutexWriteLock lock(&g_safe_primes_lock);
++    auto &entry = g_safe_primes[g_safe_primes_next];
++    OPENSSL_memcpy(entry.prime_sha256, digest, sizeof(digest));
++    entry.safe = safe;
++    g_safe_primes_next = (g_safe_primes_next + 1) % std::size(g_safe_primes);
++    if (g_safe_primes_len < std::size(g_safe_primes)) {
++      g_safe_primes_len++;
++    }
++  }
++  if (!safe) {
++    return 0;
++  }
++  const unsigned bits = BN_num_bits(p);
++  for (const auto &length : kLengths) {
++    if (bits <= length.prime_bits) {
++      return length.private_bits;
++    }
++  }
++  return 512;
 +}
  
  STACK_OF(SSL_CIPHER) *SSL_CTX_get_ciphers(const SSL_CTX *ctx) {
