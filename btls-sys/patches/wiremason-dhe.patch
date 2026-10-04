@@ -1,8 +1,8 @@
 diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
-index 9617ac4..1ba31f7 100644
+index 9617ac4..d6bb6af 100644
 --- a/include/openssl/ssl.h
 +++ b/include/openssl/ssl.h
-@@ -5990,12 +5990,22 @@ OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_expansion(SSL *ssl);
+@@ -5990,12 +5990,23 @@ OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_expansion(SSL *ssl);
  // SSL_get_server_tmp_key returns zero.
  OPENSSL_EXPORT int SSL_get_server_tmp_key(SSL *ssl, EVP_PKEY **out_key);
  
@@ -20,15 +20,16 @@ index 9617ac4..1ba31f7 100644
 +// SSL_set_min_dhe_bits configures |ssl|, a client, to accept in a TLS 1.2 DHE
 +// ServerKeyExchange only a group whose prime has at least |bits| bits, 2048 by
 +// default. A group below 512 bits, OpenSSL's minimum, or above
-+// |OPENSSL_DH_MAX_MODULUS_BITS| is refused either way. It returns one on
-+// success and zero if |ssl|'s configuration was shed.
++// |OPENSSL_DH_MAX_MODULUS_BITS| is refused either way, and the session of one
++// below 2048 bits isn't resumable. It returns one on success and zero if
++// |ssl|'s configuration was shed.
 +OPENSSL_EXPORT int SSL_set_min_dhe_bits(SSL *ssl, uint16_t bits);
 +
  // SSL_CTX_set_tmp_dh_callback does nothing.
  OPENSSL_EXPORT void SSL_CTX_set_tmp_dh_callback(
      SSL_CTX *ctx, DH *(*cb)(SSL *ssl, int is_export, int keylength));
 diff --git a/ssl/handshake_client.cc b/ssl/handshake_client.cc
-index f589a6d..e801d85 100644
+index f589a6d..73ccc98 100644
 --- a/ssl/handshake_client.cc
 +++ b/ssl/handshake_client.cc
 @@ -1496,9 +1496,11 @@ static bool ssl_send_dhe_client_key_exchange(SSL_HANDSHAKE *hs, CBB *body,
@@ -45,6 +46,27 @@ index f589a6d..e801d85 100644
        BN_cmp_word(g.get(), 1) <= 0 || BN_cmp(g.get(), p.get()) >= 0) {
      OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_DH_P_LENGTH);
      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
+@@ -1510,6 +1512,8 @@ static bool ssl_send_dhe_client_key_exchange(SSL_HANDSHAKE *hs, CBB *body,
+   }
+   p.release();
+   g.release();
++  // A connection resuming the session would skip the size check above.
++  hs->weak_dhe_group = bits < SSL_CONFIG::kDefaultMinDHEBits;
+ 
+   // The premaster secret is the shared value without leading zero bytes. See
+   // RFC 5246, section 8.1.2. |DH_compute_key| rejects an invalid peer value.
+@@ -1997,8 +2001,9 @@ static enum ssl_hs_wait_t do_finish_client_handshake(SSL_HANDSHAKE *hs) {
+     if (!ssl->s3->established_session) {
+       return ssl_hs_error;
+     }
+-    // Renegotiations do not participate in session resumption.
+-    if (!ssl->s3->initial_handshake_complete) {
++    // Renegotiations do not participate in session resumption, nor do sessions
++    // from a weak DHE group.
++    if (!ssl->s3->initial_handshake_complete && !hs->weak_dhe_group) {
+       ssl->s3->established_session->not_resumable = false;
+     }
+ 
 diff --git a/ssl/handshake_server.cc b/ssl/handshake_server.cc
 index 0ffc246..98b9133 100644
 --- a/ssl/handshake_server.cc
@@ -131,7 +153,7 @@ index 0ffc246..98b9133 100644
      // Parse the ClientKeyExchange.
      CBS ciphertext;
 diff --git a/ssl/internal.h b/ssl/internal.h
-index 3bf4328..f08337a 100644
+index 3bf4328..0bb40ad 100644
 --- a/ssl/internal.h
 +++ b/ssl/internal.h
 @@ -35,6 +35,7 @@
@@ -142,7 +164,7 @@ index 3bf4328..f08337a 100644
  #include <openssl/err.h>
  #include <openssl/hpke.h>
  #include <openssl/mem.h>
-@@ -1932,6 +1933,10 @@ struct SSL_HANDSHAKE {
+@@ -1932,6 +1933,14 @@ struct SSL_HANDSHAKE {
    // ServerKeyExchange.
    Array<uint8_t> dh_p, dh_g;
  
@@ -150,10 +172,14 @@ index 3bf4328..f08337a 100644
 +  // ServerKeyExchange.
 +  UniquePtr<DH> dhe_key;
 +
++  // weak_dhe_group, on clients, is whether the DHE group was smaller than the
++  // default minimum, which leaves the session unresumable.
++  bool weak_dhe_group = false;
++
    // peer_key is the peer's ECDH key for a TLS 1.2 client.
    Array<uint8_t> peer_key;
  
-@@ -3481,6 +3486,14 @@ struct SSL_CONFIG {
+@@ -3481,6 +3490,15 @@ struct SSL_CONFIG {
    // PSK-based key exchanges.
    UniquePtr<char> psk_identity_hint;
  
@@ -163,12 +189,13 @@ index 3bf4328..f08337a 100644
 +
 +  // Client-only: min_dhe_bits is the size of the smallest Diffie-Hellman group a
 +  // TLS 1.2 DHE ServerKeyExchange may name (see |SSL_set_min_dhe_bits|).
-+  uint16_t min_dhe_bits = 2048;
++  static constexpr uint16_t kDefaultMinDHEBits = 2048;
++  uint16_t min_dhe_bits = kDefaultMinDHEBits;
 +
    unsigned (*psk_client_callback)(SSL *ssl, const char *hint, char *identity,
                                    unsigned max_identity_len, uint8_t *psk,
                                    unsigned max_psk_len) = nullptr;
-@@ -4176,6 +4189,10 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
+@@ -4176,6 +4194,10 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
    // PSK-based key exchanges.
    bssl::UniquePtr<char> psk_identity_hint;
  

@@ -3474,7 +3474,7 @@ impl SslRef {
     }
 
     /// Accepts, as a client, a TLS 1.2 DHE group of at least `bits` bits instead of 2048,
-    /// never one below 512 bits.
+    /// never one below 512 bits. The session of a group below 2048 bits isn't resumable.
     #[corresponds(SSL_set_min_dhe_bits)]
     pub fn set_min_dhe_bits(&mut self, bits: u16) -> Result<(), ErrorStack> {
         unsafe { cvt(ffi::SSL_set_min_dhe_bits(self.as_ptr(), bits)) }
