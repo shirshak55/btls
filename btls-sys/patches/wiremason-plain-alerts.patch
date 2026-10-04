@@ -1,0 +1,22 @@
+diff --git a/ssl/tls_record.cc b/ssl/tls_record.cc
+index b3eff31..feb40fe 100644
+--- a/ssl/tls_record.cc
++++ b/ssl/tls_record.cc
+@@ -163,6 +163,17 @@ ssl_open_record_t tls_open_record(SSL *ssl, uint8_t *out_type,
+     return ssl_open_record_discard;
+   }
+ 
++  // WireMason: a TLS 1.3 server reads an alert its client sent unencrypted before
++  // any record that decrypts, as OpenSSL does: a client failing the server's flight
++  // (its certificate, say) before switching to its handshake keys sends one so
++  // (OpenSSL's).
++  if (ssl->server && ssl_has_final_version(ssl) &&
++      ssl_protocol_version(ssl) >= TLS1_3_VERSION && SSL_in_init(ssl) &&
++      !ssl->s3->aead_read_ctx->is_null_cipher() &&
++      ssl->s3->read_sequence == 0 && type == SSL3_RT_ALERT) {
++    return ssl_process_alert(ssl, out_alert, Span<const uint8_t>(body));
++  }
++
+   // Skip early data received when expecting a second ClientHello if we rejected
+   // 0RTT.
+   if (ssl->s3->skip_early_data &&                  //

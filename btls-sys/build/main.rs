@@ -499,6 +499,9 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
     println!("cargo:warning=applying WireMason RSASSA-PSS certificate verification to BoringSSL");
     apply_patch(config, "wiremason-rsa-pss.patch")?;
 
+    println!("cargo:warning=applying WireMason unencrypted TLS 1.3 client alerts to BoringSSL");
+    apply_patch(config, "wiremason-plain-alerts.patch")?;
+
     Ok(())
 }
 
