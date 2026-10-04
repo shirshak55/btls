@@ -502,6 +502,9 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
     println!("cargo:warning=applying WireMason unencrypted TLS 1.3 client alerts to BoringSSL");
     apply_patch(config, "wiremason-plain-alerts.patch")?;
 
+    println!("cargo:warning=applying WireMason mirrored CertificateRequest to BoringSSL");
+    apply_patch(config, "wiremason-client-auth.patch")?;
+
     Ok(())
 }
 

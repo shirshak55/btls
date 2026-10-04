@@ -1,0 +1,136 @@
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index d5a1901..2eff701 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -2911,6 +2911,18 @@ OPENSSL_EXPORT void SSL_set_custom_verify(
+     SSL *ssl, int mode,
+     enum ssl_verify_result_t (*callback)(SSL *ssl, uint8_t *out_alert));
+ 
++// SSL_set1_certificate_request configures |ssl|, a server requesting a client
++// certificate (|SSL_VERIFY_PEER|), to send |body| verbatim as the body of its
++// CertificateRequest in a handshake negotiating |version|, such as the request
++// of an origin a proxy mirrors, and its own in a handshake negotiating another.
++// Its custom verify callback (see |SSL_set_custom_verify|) then runs on the
++// client's Certificate whether or not it carries a certificate, so that the
++// caller decides on an empty one too. It returns one on success and zero on
++// error.
++OPENSSL_EXPORT int SSL_set1_certificate_request(SSL *ssl, uint16_t version,
++                                                const uint8_t *body,
++                                                size_t body_len);
++
+ // SSL_CTX_get_verify_mode returns |ctx|'s verify mode, set by
+ // |SSL_CTX_set_verify|.
+ OPENSSL_EXPORT int SSL_CTX_get_verify_mode(const SSL_CTX *ctx);
+diff --git a/ssl/handshake_server.cc b/ssl/handshake_server.cc
+index c92c4b3..8f44a57 100644
+--- a/ssl/handshake_server.cc
++++ b/ssl/handshake_server.cc
+@@ -1219,7 +1219,17 @@ static enum ssl_hs_wait_t do_send_server_hello_done(SSL_HANDSHAKE *hs) {
+   ScopedCBB cbb;
+   CBB body;
+ 
+-  if (hs->cert_request) {
++  if (hs->cert_request && hs->config->certificate_request_version ==
++                              ssl_protocol_version(ssl)) {
++    if (!ssl->method->init_message(ssl, cbb.get(), &body,
++                                   SSL3_MT_CERTIFICATE_REQUEST) ||
++        !CBB_add_bytes(&body, hs->config->certificate_request.data(),
++                       hs->config->certificate_request.size()) ||
++        !ssl_add_message_cbb(ssl, cbb.get())) {
++      OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
++      return ssl_hs_error;
++    }
++  } else if (hs->cert_request) {
+     CBB cert_types, sigalgs_cbb;
+     if (!ssl->method->init_message(ssl, cbb.get(), &body,
+                                    SSL3_MT_CERTIFICATE_REQUEST) ||
+@@ -1328,7 +1338,10 @@ static enum ssl_hs_wait_t do_read_client_certificate(SSL_HANDSHAKE *hs) {
+ }
+ 
+ static enum ssl_hs_wait_t do_verify_client_certificate(SSL_HANDSHAKE *hs) {
+-  if (ssl_session_has_peer_cred(hs->new_session.get())) {
++  // The caller of a mirrored CertificateRequest decides on an empty Certificate
++  // too.
++  if (ssl_session_has_peer_cred(hs->new_session.get()) ||
++      (hs->cert_request && hs->config->certificate_request_version != 0)) {
+     switch (ssl_verify_peer_cert(hs)) {
+       case ssl_verify_ok:
+         break;
+diff --git a/ssl/internal.h b/ssl/internal.h
+index 4593ac2..842bf19 100644
+--- a/ssl/internal.h
++++ b/ssl/internal.h
+@@ -3488,6 +3488,11 @@ struct SSL_CONFIG {
+ 
+   enum ssl_verify_result_t (*custom_verify_callback)(
+       SSL *ssl, uint8_t *out_alert) = nullptr;
++  // Server-only: certificate_request is the body of the CertificateRequest
++  // sent in a handshake negotiating certificate_request_version, if not zero
++  // (see |SSL_set1_certificate_request|).
++  Array<uint8_t> certificate_request;
++  uint16_t certificate_request_version = 0;
+   // Server-only: psk_identity_hint is the identity hint to send in
+   // PSK-based key exchanges.
+   UniquePtr<char> psk_identity_hint;
+diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
+index 91fc13a..f257cfc 100644
+--- a/ssl/ssl_lib.cc
++++ b/ssl/ssl_lib.cc
+@@ -2411,6 +2411,16 @@ void SSL_set_custom_verify(
+   ssl->config->custom_verify_callback = callback;
+ }
+ 
++int SSL_set1_certificate_request(SSL *ssl, uint16_t version,
++                                 const uint8_t *body, size_t body_len) {
++  if (!ssl->config || version == 0 ||
++      !ssl->config->certificate_request.CopyFrom(Span(body, body_len))) {
++    return 0;
++  }
++  ssl->config->certificate_request_version = version;
++  return 1;
++}
++
+ void SSL_CTX_enable_signed_cert_timestamps(SSL_CTX *ctx) {
+   ctx->signed_cert_timestamps_enabled = true;
+ }
+diff --git a/ssl/tls13_server.cc b/ssl/tls13_server.cc
+index d247d7e..8dc6f6c 100644
+--- a/ssl/tls13_server.cc
++++ b/ssl/tls13_server.cc
+@@ -1163,7 +1163,16 @@ static enum ssl_hs_wait_t do_send_server_hello(SSL_HANDSHAKE *hs) {
+   }
+ 
+   // Send a CertificateRequest, if necessary.
+-  if (hs->cert_request) {
++  if (hs->cert_request && hs->config->certificate_request_version ==
++                              ssl_protocol_version(ssl)) {
++    if (!ssl->method->init_message(ssl, cbb.get(), &body,
++                                   SSL3_MT_CERTIFICATE_REQUEST) ||
++        !CBB_add_bytes(&body, hs->config->certificate_request.data(),
++                       hs->config->certificate_request.size()) ||
++        !ssl_add_message_cbb(ssl, cbb.get())) {
++      return ssl_hs_error;
++    }
++  } else if (hs->cert_request) {
+     CBB cert_request_extensions, sigalg_contents, sigalgs_cbb;
+     if (!ssl->method->init_message(ssl, cbb.get(), &body,
+                                    SSL3_MT_CERTIFICATE_REQUEST) ||
+@@ -1461,6 +1470,18 @@ static enum ssl_hs_wait_t do_read_client_certificate(SSL_HANDSHAKE *hs) {
+ static enum ssl_hs_wait_t do_read_client_certificate_verify(SSL_HANDSHAKE *hs) {
+   SSL *const ssl = hs->ssl;
+   if (!ssl_session_has_peer_cred(hs->new_session.get())) {
++    // The caller of a mirrored CertificateRequest decides on an empty
++    // Certificate too.
++    if (hs->config->certificate_request_version != 0) {
++      switch (ssl_verify_peer_cert(hs)) {
++        case ssl_verify_ok:
++          break;
++        case ssl_verify_invalid:
++          return ssl_hs_error;
++        case ssl_verify_retry:
++          return ssl_hs_certificate_verify;
++      }
++    }
+     // Skip this state.
+     hs->tls13_state = state13_read_channel_id;
+     return ssl_hs_ok;

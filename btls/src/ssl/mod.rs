@@ -542,6 +542,13 @@ impl SslAlert {
     pub const UNKNOWN_PSK_IDENTITY: Self = Self(ffi::SSL_AD_UNKNOWN_PSK_IDENTITY);
     pub const CERTIFICATE_REQUIRED: Self = Self(ffi::SSL_AD_CERTIFICATE_REQUIRED);
     pub const NO_APPLICATION_PROTOCOL: Self = Self(ffi::SSL_AD_NO_APPLICATION_PROTOCOL);
+
+    /// Constructs an `SslAlert` from its raw value, an alert description (RFC 8446,
+    /// section 6), named here or not.
+    #[must_use]
+    pub const fn from_raw(raw: c_int) -> SslAlert {
+        SslAlert(raw)
+    }
 }
 
 /// An error returned from an ALPN selection callback.
@@ -3472,6 +3479,27 @@ impl SslRef {
                 c_int::from(mode.bits()),
                 Some(ssl_raw_custom_verify::<F>),
             );
+        }
+    }
+
+    /// Sends, as a server requesting a client certificate ([`SslVerifyMode::PEER`]), `body`
+    /// verbatim as the body of its CertificateRequest in a handshake negotiating `version`
+    /// (an origin's request a proxy mirrors), its own in one negotiating another. The custom
+    /// verify callback (see [`Self::set_custom_verify_callback`]) then runs on the client's
+    /// Certificate whether or not it carries a certificate.
+    #[corresponds(SSL_set1_certificate_request)]
+    pub fn set_certificate_request(
+        &mut self,
+        version: SslVersion,
+        body: &[u8],
+    ) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_set1_certificate_request(
+                self.as_ptr(),
+                version.0,
+                body.as_ptr(),
+                body.len(),
+            ))
         }
     }
 
