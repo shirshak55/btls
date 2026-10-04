@@ -1,0 +1,369 @@
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index 3391c14..eb62bed 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -5679,6 +5679,15 @@ OPENSSL_EXPORT void SSL_set_post_handshake_auth(SSL *ssl, int enabled);
+ // sent after the server answers with its own limit are no larger than it allows.
+ OPENSSL_EXPORT void SSL_CTX_set_record_size_limit(SSL_CTX *ctx, uint16_t limit);
+ 
++// SSL_CTX_set_max_fragment_length configures clients on |ctx| to send the
++// max_fragment_length extension (RFC 6066) with |mode| as given, or none if
++// zero. Once the server echoes a mode of 1 to 4, records sent are no larger
++// than 2^(8 + mode) bytes; a server echoing any other value fails the
++// handshake. Servers echo a client's mode of 1 to 4, and then send records no
++// larger, only when |SSL_CTX_set_server_extension_order| lists the extension.
++OPENSSL_EXPORT void SSL_CTX_set_max_fragment_length(SSL_CTX *ctx,
++                                                    uint8_t mode);
++
+ // SSL_CTX_set_session_id_length configures clients on |ctx| to send a random
+ // legacy_session_id of |len| bytes, at most 32, in a ClientHello that resumes
+ // no session by ID or TLS 1.2 ticket, in place of the 32 bytes of TLS 1.3
+diff --git a/include/openssl/tls1.h b/include/openssl/tls1.h
+index f31eaae..acacda5 100644
+--- a/include/openssl/tls1.h
++++ b/include/openssl/tls1.h
+@@ -80,6 +80,9 @@ extern "C" {
+ // ExtensionType value from RFC 8449
+ #define TLSEXT_TYPE_record_size_limit 28
+ 
++// ExtensionType value from RFC 6066
++#define TLSEXT_TYPE_max_fragment_length 1
++
+ // ExtensionType value from draft-ietf-quic-tls. Drafts 00 through 32 use
+ // 0xffa5 which is part of the Private Use section of the registry, and it
+ // collides with TLS-LTS and, based on scans, something else too (though this
+diff --git a/ssl/extensions.cc b/ssl/extensions.cc
+index e93b762..1bcac40 100644
+--- a/ssl/extensions.cc
++++ b/ssl/extensions.cc
+@@ -4385,6 +4385,87 @@ static bool ext_record_size_limit_parse_serverhello(SSL_HANDSHAKE *hs,
+   return true;
+ }
+ 
++// Maximum fragment length.
++//
++// https://www.rfc-editor.org/rfc/rfc6066.html#section-4
++
++// Both sides send records of at most 2^(8 + mode) bytes of plaintext.
++static void limit_max_fragment_length(SSL *ssl, uint8_t mode) {
++  size_t max_fragment = size_t{1} << (8 + mode);
++  if (max_fragment < ssl->max_send_fragment) {
++    ssl->max_send_fragment = static_cast<uint16_t>(max_fragment);
++  }
++}
++
++static bool ext_max_fragment_length_add_clienthello(
++    const SSL_HANDSHAKE *hs, CBB *out, CBB *out_compressible,
++    ssl_client_hello_type_t type) {
++  // QUIC has its own framing and must not negotiate a fragment length.
++  if (hs->config->max_fragment_length == 0 || SSL_is_quic(hs->ssl) ||
++      type == ssl_client_hello_inner) {
++    return true;
++  }
++
++  return CBB_add_u16(out, TLSEXT_TYPE_max_fragment_length) &&
++         CBB_add_u16(out, 1 /* length */) &&
++         CBB_add_u8(out, hs->config->max_fragment_length);
++}
++
++static bool ext_max_fragment_length_parse_serverhello(SSL_HANDSHAKE *hs,
++                                                      uint8_t *out_alert,
++                                                      CBS *contents) {
++  if (contents == nullptr) {
++    return true;
++  }
++
++  uint8_t mode;
++  if (!CBS_get_u8(contents, &mode) || CBS_len(contents) != 0) {
++    return false;
++  }
++  if (mode != hs->config->max_fragment_length || mode < 1 || mode > 4) {
++    *out_alert = SSL_AD_ILLEGAL_PARAMETER;
++    return false;
++  }
++
++  limit_max_fragment_length(hs->ssl, mode);
++  return true;
++}
++
++static bool ext_max_fragment_length_parse_clienthello(SSL_HANDSHAKE *hs,
++                                                      uint8_t *out_alert,
++                                                      CBS *contents) {
++  if (contents == nullptr) {
++    return true;
++  }
++
++  uint8_t mode;
++  if (!CBS_get_u8(contents, &mode) || CBS_len(contents) != 0) {
++    return false;
++  }
++  hs->max_fragment_length = mode;
++  return true;
++}
++
++static bool ext_max_fragment_length_add_serverhello(SSL_HANDSHAKE *hs,
++                                                    CBB *out) {
++  // Only a server extension order listing the extension echoes it, as the
++  // server it mirrors did; an invalid mode is not echoed.
++  const uint8_t mode = hs->max_fragment_length;
++  const Array<uint16_t> &order = hs->config->server_extension_order;
++  if (mode < 1 || mode > 4 || SSL_is_quic(hs->ssl) ||
++      std::find(order.begin(), order.end(), TLSEXT_TYPE_max_fragment_length) ==
++          order.end()) {
++    return true;
++  }
++
++  if (!CBB_add_u16(out, TLSEXT_TYPE_max_fragment_length) ||
++      !CBB_add_u16(out, 1 /* length */) || !CBB_add_u8(out, mode)) {
++    return false;
++  }
++  limit_max_fragment_length(hs->ssl, mode);
++  return true;
++}
++
+ // kExtensions contains all the supported extensions.
+ static const struct tls_extension kExtensions[] = {
+     {
+@@ -4621,6 +4702,13 @@ static const struct tls_extension kExtensions[] = {
+         ignore_parse_clienthello,
+         dont_add_serverhello,
+     },
++    {
++        TLSEXT_TYPE_max_fragment_length,
++        ext_max_fragment_length_add_clienthello,
++        ext_max_fragment_length_parse_serverhello,
++        ext_max_fragment_length_parse_clienthello,
++        ext_max_fragment_length_add_serverhello,
++    },
+ };
+ 
+ #define kNumExtensions (sizeof(kExtensions) / sizeof(struct tls_extension))
+@@ -4727,7 +4815,7 @@ static void ssl_expect_renegotiation_info(SSL_HANDSHAKE *hs) {
+   uint32_t index;
+   if (hs->config->renegotiation_scsv &&
+       tls_extension_find(&index, TLSEXT_TYPE_renegotiate) != nullptr) {
+-    hs->extensions.sent |= (1u << index);
++    hs->extensions.sent |= (uint64_t{1} << index);
+   }
+ }
+ 
+@@ -4799,7 +4887,7 @@ static bool ssl_add_listed_clienthello_extensions(
+     // The PSK extension must be last, so it is written below.
+     if (id == TLSEXT_TYPE_pre_shared_key ||
+         tls_extension_find(&i, id) == nullptr ||
+-        (hs->extensions.sent & (1u << i))) {
++        (hs->extensions.sent & (uint64_t{1} << i))) {
+       continue;
+     }
+     const size_t len_before = CBB_len(extensions);
+@@ -4809,14 +4897,14 @@ static bool ssl_add_listed_clienthello_extensions(
+       return false;
+     }
+     if (CBB_len(extensions) != len_before) {
+-      hs->extensions.sent |= (1u << i);
++      hs->extensions.sent |= (uint64_t{1} << i);
+     }
+   }
+ 
+   // A cookie answers a HelloRetryRequest, so it goes whether listed or not.
+   uint32_t cookie;
+   if (tls_extension_find(&cookie, TLSEXT_TYPE_cookie) != nullptr &&
+-      !(hs->extensions.sent & (1u << cookie))) {
++      !(hs->extensions.sent & (uint64_t{1} << cookie))) {
+     const size_t len_before = CBB_len(extensions);
+     if (!kExtensions[cookie].add_clienthello(hs, extensions, extensions,
+                                              type)) {
+@@ -4824,7 +4912,7 @@ static bool ssl_add_listed_clienthello_extensions(
+       return false;
+     }
+     if (CBB_len(extensions) != len_before) {
+-      hs->extensions.sent |= (1u << cookie);
++      hs->extensions.sent |= (uint64_t{1} << cookie);
+     }
+   }
+ 
+@@ -4883,7 +4971,7 @@ static bool ssl_add_clienthello_tlsext_inner(SSL_HANDSHAKE *hs, CBB *out,
+     // The callback may write to at most one output.
+     assert(bytes_written == 0 || bytes_written_compressed == 0);
+     if (bytes_written != 0 || bytes_written_compressed != 0) {
+-      hs->inner_extensions_sent |= (1u << i);
++      hs->inner_extensions_sent |= (uint64_t{1} << i);
+     }
+     // If compressed, update the running ech_outer_extensions extension.
+     if (bytes_written_compressed != 0 &&
+@@ -4998,7 +5086,7 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
+ 
+     const size_t bytes_written = CBB_len(&extensions) - len_before;
+     if (bytes_written != 0) {
+-      hs->extensions.sent |= (1u << i);
++      hs->extensions.sent |= (uint64_t{1} << i);
+     }
+     // If the difference in lengths is only four bytes then the extension had
+     // an empty body.
+@@ -5100,7 +5188,7 @@ bool ssl_add_serverhello_tlsext(SSL_HANDSHAKE *hs, CBB *out) {
+     for (uint16_t id : hs->config->server_extension_order) {
+       for (unsigned i = 0; i < kNumExtensions; i++) {
+         if (kExtensions[i].value != id || emitted[i] ||
+-            !(hs->extensions.received & (1u << i))) {
++            !(hs->extensions.received & (uint64_t{1} << i))) {
+           continue;
+         }
+         emitted[i] = true;
+@@ -5113,7 +5201,7 @@ bool ssl_add_serverhello_tlsext(SSL_HANDSHAKE *hs, CBB *out) {
+       }
+     }
+     for (unsigned i = 0; i < kNumExtensions; i++) {
+-      if (emitted[i] || !(hs->extensions.received & (1u << i))) {
++      if (emitted[i] || !(hs->extensions.received & (uint64_t{1} << i))) {
+         continue;
+       }
+       if (hs->config->strict_server_extension_order) {
+@@ -5153,7 +5241,7 @@ bool ssl_add_serverhello_tlsext(SSL_HANDSHAKE *hs, CBB *out) {
+   }
+ 
+   for (unsigned i = 0; i < kNumExtensions; i++) {
+-    if (!(hs->extensions.received & (1u << i))) {
++    if (!(hs->extensions.received & (uint64_t{1} << i))) {
+       // Don't send extensions that were not received.
+       continue;
+     }
+@@ -5202,7 +5290,7 @@ static bool ssl_scan_clienthello_tlsext(SSL_HANDSHAKE *hs,
+       continue;
+     }
+ 
+-    hs->extensions.received |= (1u << ext_index);
++    hs->extensions.received |= (uint64_t{1} << ext_index);
+     uint8_t alert = SSL_AD_DECODE_ERROR;
+     if (!ext->parse_clienthello(hs, &alert, &extension)) {
+       *out_alert = alert;
+@@ -5213,7 +5301,7 @@ static bool ssl_scan_clienthello_tlsext(SSL_HANDSHAKE *hs,
+   }
+ 
+   for (size_t i = 0; i < kNumExtensions; i++) {
+-    if (hs->extensions.received & (1u << i)) {
++    if (hs->extensions.received & (uint64_t{1} << i)) {
+       continue;
+     }
+ 
+@@ -5227,7 +5315,7 @@ static bool ssl_scan_clienthello_tlsext(SSL_HANDSHAKE *hs,
+       CBS_init(&fake_contents, kFakeRenegotiateExtension,
+                sizeof(kFakeRenegotiateExtension));
+       contents = &fake_contents;
+-      hs->extensions.received |= (1u << i);
++      hs->extensions.received |= (uint64_t{1} << i);
+     }
+ 
+     // Extension wasn't observed so call the callback with a NULL
+@@ -5269,7 +5357,7 @@ static bool ssl_scan_serverhello_tlsext(SSL_HANDSHAKE *hs, const CBS *cbs,
+     return false;
+   }
+ 
+-  uint32_t received = 0;
++  uint64_t received = 0;
+   while (CBS_len(&extensions) != 0) {
+     uint16_t type;
+     CBS extension;
+@@ -5310,7 +5398,7 @@ static bool ssl_scan_serverhello_tlsext(SSL_HANDSHAKE *hs, const CBS *cbs,
+     static_assert(kNumExtensions <= sizeof(hs->extensions.sent) * 8,
+                   "too many bits");
+ 
+-    if (!(hs->extensions.sent & (1u << ext_index))) {
++    if (!(hs->extensions.sent & (uint64_t{1} << ext_index))) {
+       // If the extension was never sent then it is illegal.
+       OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_EXTENSION);
+       ERR_add_error_dataf("extension %u", (unsigned)type);
+@@ -5318,7 +5406,7 @@ static bool ssl_scan_serverhello_tlsext(SSL_HANDSHAKE *hs, const CBS *cbs,
+       return false;
+     }
+ 
+-    received |= (1u << ext_index);
++    received |= (uint64_t{1} << ext_index);
+ 
+     uint8_t alert = SSL_AD_DECODE_ERROR;
+     if (!ext->parse_serverhello(hs, &alert, &extension)) {
+@@ -5330,7 +5418,7 @@ static bool ssl_scan_serverhello_tlsext(SSL_HANDSHAKE *hs, const CBS *cbs,
+   }
+ 
+   for (size_t i = 0; i < kNumExtensions; i++) {
+-    if (!(received & (1u << i))) {
++    if (!(received & (uint64_t{1} << i))) {
+       // Extension wasn't observed so call the callback with a NULL
+       // parameter.
+       uint8_t alert = SSL_AD_DECODE_ERROR;
+diff --git a/ssl/internal.h b/ssl/internal.h
+index 36612de..8306bc3 100644
+--- a/ssl/internal.h
++++ b/ssl/internal.h
+@@ -1836,15 +1836,15 @@ struct SSL_HANDSHAKE {
+     // sent is a bitset where the bits correspond to elements of kExtensions
+     // in extensions.cc. Each bit is set if that extension was sent in a
+     // ClientHello. It's not used by servers.
+-    uint32_t sent = 0;
++    uint64_t sent = 0;
+     // received is a bitset, like |sent|, but is used by servers to record
+     // which extensions were received from a client.
+-    uint32_t received;
++    uint64_t received;
+   } extensions;
+ 
+   // inner_extensions_sent, on clients that offer ECH, is |extensions.sent| for
+   // the ClientHelloInner.
+-  uint32_t inner_extensions_sent = 0;
++  uint64_t inner_extensions_sent = 0;
+ 
+   // early_data_written is the amount of early data that has been written by the
+   // record layer.
+@@ -2148,6 +2148,10 @@ struct SSL_HANDSHAKE {
+   // ech_config_id is the ECH config sent by the client.
+   uint8_t ech_config_id = 0;
+ 
++  // max_fragment_length, on servers, is the mode of the client's
++  // max_fragment_length extension, or zero if it sent none.
++  uint8_t max_fragment_length = 0;
++
+   // session_id is the session ID in the ClientHello.
+   InplaceVector<uint8_t, SSL_MAX_SSL_SESSION_ID_LENGTH> session_id;
+ 
+@@ -3642,6 +3646,9 @@ struct SSL_CONFIG {
+   bool renegotiation_scsv = false;
+   bool post_handshake_auth = false;
+   uint16_t record_size_limit = 0;
++  // max_fragment_length is the client setting of
++  // |SSL_CTX_set_max_fragment_length|.
++  uint8_t max_fragment_length = 0;
+   Array<uint16_t> delegated_credentials;
+   int session_id_length = -1;
+   int ech_grease_payload_length = -1;
+@@ -4319,6 +4326,9 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
+   bool renegotiation_scsv = false;
+   bool post_handshake_auth = false;
+   uint16_t record_size_limit = 0;
++  // max_fragment_length is the client setting of
++  // |SSL_CTX_set_max_fragment_length|.
++  uint8_t max_fragment_length = 0;
+   bssl::Array<uint16_t> delegated_credentials;
+   int session_id_length = -1;
+   int ech_grease_payload_length = -1;
+diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
+index 2036e47..2d4b36f 100644
+--- a/ssl/ssl_lib.cc
++++ b/ssl/ssl_lib.cc
+@@ -527,6 +527,7 @@ SSL *SSL_new(SSL_CTX *ctx) {
+   ssl->config->renegotiation_scsv = ctx->renegotiation_scsv;
+   ssl->config->post_handshake_auth = ctx->post_handshake_auth;
+   ssl->config->record_size_limit = ctx->record_size_limit;
++  ssl->config->max_fragment_length = ctx->max_fragment_length;
+   ssl->config->session_id_length = ctx->session_id_length;
+   ssl->config->ech_grease_payload_length = ctx->ech_grease_payload_length;
+   ssl->config->ech_grease_kdf_id = ctx->ech_grease_kdf_id;
+@@ -3260,6 +3261,10 @@ void SSL_CTX_set_record_size_limit(SSL_CTX *ctx, uint16_t limit) {
+   ctx->record_size_limit = limit;
+ }
+ 
++void SSL_CTX_set_max_fragment_length(SSL_CTX *ctx, uint8_t mode) {
++  ctx->max_fragment_length = mode;
++}
++
+ int SSL_CTX_set_session_id_length(SSL_CTX *ctx, int len) {
+   if (len > SSL_MAX_SSL_SESSION_ID_LENGTH) {
+     OPENSSL_PUT_ERROR(SSL, ERR_R_OVERFLOW);

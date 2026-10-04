@@ -490,6 +490,9 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
     println!("cargo:warning=applying WireMason X448 key exchange to BoringSSL");
     apply_patch(config, "wiremason-x448.patch")?;
 
+    println!("cargo:warning=applying WireMason max_fragment_length to BoringSSL");
+    apply_patch(config, "wiremason-max-fragment-length.patch")?;
+
     Ok(())
 }
 

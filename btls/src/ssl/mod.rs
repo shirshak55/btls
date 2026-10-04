@@ -613,6 +613,7 @@ impl ExtensionType {
     pub const NEXT_PROTO_NEG: Self = Self(ffi::TLSEXT_TYPE_next_proto_neg as u16);
     pub const CHANNEL_ID: Self = Self(ffi::TLSEXT_TYPE_channel_id as u16);
     pub const RECORD_SIZE_LIMIT: Self = Self(ffi::TLSEXT_TYPE_record_size_limit as u16);
+    pub const MAX_FRAGMENT_LENGTH: Self = Self(ffi::TLSEXT_TYPE_max_fragment_length as u16);
     pub const ENCRYPT_THEN_MAC: Self = Self(ffi::TLSEXT_TYPE_encrypt_then_mac as u16);
     pub const POST_HANDSHAKE_AUTH: Self = Self(ffi::TLSEXT_TYPE_post_handshake_auth as u16);
 }
@@ -2055,6 +2056,15 @@ impl SslContextBuilder {
     #[corresponds(SSL_CTX_set_record_size_limit)]
     pub fn set_record_size_limit(&mut self, limit: u16) {
         unsafe { ffi::SSL_CTX_set_record_size_limit(self.as_ptr(), limit) }
+    }
+
+    /// Sets the max_fragment_length mode (RFC 6066) clients send as given, or none if zero.
+    /// Once the server echoes a mode of 1 to 4, records sent are at most 2^(8 + mode) bytes; a
+    /// server echoing another value fails the handshake. Servers echo a client's mode, and
+    /// send records no larger, only when their server extension order lists the extension.
+    #[corresponds(SSL_CTX_set_max_fragment_length)]
+    pub fn set_max_fragment_length(&mut self, mode: u8) {
+        unsafe { ffi::SSL_CTX_set_max_fragment_length(self.as_ptr(), mode) }
     }
 
     /// Sets the length of the random legacy session ID clients send when they resume no
