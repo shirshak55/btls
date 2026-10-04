@@ -1673,7 +1673,7 @@ index 0000000..b1b72f2
 +
 +#endif  // OPENSSL_HEADER_CURVE448_H
 diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
-index cb052f1..3391c14 100644
+index 3ddb7a8..9a3da79 100644
 --- a/include/openssl/ssl.h
 +++ b/include/openssl/ssl.h
 @@ -2607,6 +2607,7 @@ OPENSSL_EXPORT size_t SSL_CTX_get_num_tickets(const SSL_CTX *ctx);
