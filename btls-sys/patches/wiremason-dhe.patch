@@ -18,6 +18,24 @@ index eb62bed..6b96db0 100644
  OPENSSL_EXPORT int SSL_set_tmp_dh(SSL *ssl, const DH *dh);
  
  // SSL_CTX_set_tmp_dh_callback does nothing.
+diff --git a/ssl/handshake_client.cc b/ssl/handshake_client.cc
+index f589a6d..8a88340 100644
+--- a/ssl/handshake_client.cc
++++ b/ssl/handshake_client.cc
+@@ -1496,9 +1496,11 @@ static bool ssl_send_dhe_client_key_exchange(SSL_HANDSHAKE *hs, CBB *body,
+     return false;
+   }
+ 
+-  // Refuse groups weaker than 2048 bits, and bound the work a large one costs.
++  // Accept every group BoringSSL computes with, down to OpenSSL's 512-bit
++  // minimum: whether a weak one will do is left to the client a server
++  // reproducing it answers.
+   const unsigned bits = BN_num_bits(p.get());
+-  if (bits < 2048 || bits > 8192 || !BN_is_odd(p.get()) ||
++  if (bits < 512 || bits > OPENSSL_DH_MAX_MODULUS_BITS || !BN_is_odd(p.get()) ||
+       BN_cmp_word(g.get(), 1) <= 0 || BN_cmp(g.get(), p.get()) >= 0) {
+     OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_DH_P_LENGTH);
+     ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
 diff --git a/ssl/handshake_server.cc b/ssl/handshake_server.cc
 index 0ffc246..98b9133 100644
 --- a/ssl/handshake_server.cc

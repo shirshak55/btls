@@ -493,8 +493,8 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
     println!("cargo:warning=applying WireMason max_fragment_length to BoringSSL");
     apply_patch(config, "wiremason-max-fragment-length.patch")?;
 
-    println!("cargo:warning=applying WireMason TLS 1.2 DHE server to BoringSSL");
-    apply_patch(config, "wiremason-dhe-server.patch")?;
+    println!("cargo:warning=applying WireMason TLS 1.2 DHE server and group bounds to BoringSSL");
+    apply_patch(config, "wiremason-dhe.patch")?;
 
     Ok(())
 }
