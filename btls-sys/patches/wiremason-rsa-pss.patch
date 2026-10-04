@@ -1,0 +1,94 @@
+diff --git a/crypto/x509/rsa_pss.cc b/crypto/x509/rsa_pss.cc
+index 4aa2123..fc806e0 100644
+--- a/crypto/x509/rsa_pss.cc
++++ b/crypto/x509/rsa_pss.cc
+@@ -121,21 +121,84 @@ int bssl::x509_rsa_ctx_to_pss(EVP_MD_CTX *ctx, X509_ALGOR *algor) {
+   return 1;
+ }
+ 
++// WireMason: the RSASSA-PSS parameters (RFC 4055, section 3.1) in |sigalg| as
++// OpenSSL reads them to verify a signature: any digest but MD4 and MD5, MGF-1 with any
++// digest, any salt length, their DEFAULTs (SHA-1, MGF-1 with SHA-1, 20) where
++// omitted, and a trailer field of 1, so a certificate OpenSSL verifies verifies here.
++static int rsa_pss_decode_verify(const X509_ALGOR *sigalg, const EVP_MD **out_md,
++                                 const EVP_MD **out_mgf1_md,
++                                 int *out_salt_len) {
++  static const uint8_t kMGF1OID[] = {0x2a, 0x86, 0x48, 0x86, 0xf7,
++                                     0x0d, 0x01, 0x01, 0x08};
++  if (sigalg->parameter == nullptr ||
++      sigalg->parameter->type != V_ASN1_SEQUENCE) {
++    return 0;
++  }
++  CBS cbs, params, hash, mask;
++  CBS_init(&cbs, sigalg->parameter->value.sequence->data,
++           sigalg->parameter->value.sequence->length);
++  int has_hash, has_mask;
++  uint64_t salt_len, trailer;
++  if (!CBS_get_asn1(&cbs, &params, CBS_ASN1_SEQUENCE) || CBS_len(&cbs) != 0 ||
++      !CBS_get_optional_asn1(
++          &params, &hash, &has_hash,
++          CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 0) ||
++      !CBS_get_optional_asn1(
++          &params, &mask, &has_mask,
++          CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 1) ||
++      !CBS_get_optional_asn1_uint64(
++          &params, &salt_len,
++          CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 2, 20) ||
++      !CBS_get_optional_asn1_uint64(
++          &params, &trailer,
++          CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 3, 1) ||
++      CBS_len(&params) != 0 || trailer != 1 || salt_len > INT_MAX) {
++    return 0;
++  }
++  int md_nid = NID_sha1, mgf1_nid = NID_sha1;
++  if (has_hash) {
++    md_nid = EVP_parse_digest_algorithm_nid(&hash);
++    if (md_nid == NID_undef || CBS_len(&hash) != 0) {
++      return 0;
++    }
++  }
++  if (has_mask) {
++    CBS mask_alg, mask_oid;
++    if (!CBS_get_asn1(&mask, &mask_alg, CBS_ASN1_SEQUENCE) ||
++        CBS_len(&mask) != 0 ||
++        !CBS_get_asn1(&mask_alg, &mask_oid, CBS_ASN1_OBJECT) ||
++        Span<const uint8_t>(mask_oid) != kMGF1OID) {
++      return 0;
++    }
++    mgf1_nid = EVP_parse_digest_algorithm_nid(&mask_alg);
++    if (mgf1_nid == NID_undef || CBS_len(&mask_alg) != 0) {
++      return 0;
++    }
++  }
++  if (md_nid == NID_md4 || md_nid == NID_md5) {
++    return 0;
++  }
++  *out_md = EVP_get_digestbynid(md_nid);
++  *out_mgf1_md = EVP_get_digestbynid(mgf1_nid);
++  *out_salt_len = (int)salt_len;
++  return *out_md != nullptr && *out_mgf1_md != nullptr;
++}
++
+ int bssl::x509_rsa_pss_to_ctx(EVP_MD_CTX *ctx, const X509_ALGOR *sigalg,
+                               EVP_PKEY *pkey) {
+   assert(OBJ_obj2nid(sigalg->algorithm) == NID_rsassaPss);
+-  rsa_pss_params_t params;
+-  if (!rsa_pss_decode(sigalg, &params)) {
++  const EVP_MD *md, *mgf1_md;
++  int salt_len;
++  if (!rsa_pss_decode_verify(sigalg, &md, &mgf1_md, &salt_len)) {
+     OPENSSL_PUT_ERROR(X509, X509_R_INVALID_PSS_PARAMETERS);
+     return 0;
+   }
+ 
+-  const EVP_MD *md = rsa_pss_params_get_md(params);
+   EVP_PKEY_CTX *pctx;
+   if (!EVP_DigestVerifyInit(ctx, &pctx, md, nullptr, pkey) ||
+       !EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) ||
+-      !EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, RSA_PSS_SALTLEN_DIGEST) ||
+-      !EVP_PKEY_CTX_set_rsa_mgf1_md(pctx, md)) {
++      !EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, salt_len) ||
++      !EVP_PKEY_CTX_set_rsa_mgf1_md(pctx, mgf1_md)) {
+     return 0;
+   }
+ 
