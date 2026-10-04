@@ -1,0 +1,191 @@
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index eb62bed..6b96db0 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -5988,10 +5988,13 @@ OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_expansion(SSL *ssl);
+ // SSL_get_server_tmp_key returns zero.
+ OPENSSL_EXPORT int SSL_get_server_tmp_key(SSL *ssl, EVP_PKEY **out_key);
+ 
+-// SSL_CTX_set_tmp_dh returns 1.
++// SSL_CTX_set_tmp_dh configures servers on |ctx| to negotiate the TLS 1.2 DHE
++// cipher suites, with the Diffie-Hellman group |dh| (its prime and generator,
++// copied), or none of them when |dh| is NULL. It returns one on success and
++// zero on error.
+ OPENSSL_EXPORT int SSL_CTX_set_tmp_dh(SSL_CTX *ctx, const DH *dh);
+ 
+-// SSL_set_tmp_dh returns 1.
++// SSL_set_tmp_dh behaves like |SSL_CTX_set_tmp_dh| but configures |ssl|.
+ OPENSSL_EXPORT int SSL_set_tmp_dh(SSL *ssl, const DH *dh);
+ 
+ // SSL_CTX_set_tmp_dh_callback does nothing.
+diff --git a/ssl/handshake_server.cc b/ssl/handshake_server.cc
+index 0ffc246..98b9133 100644
+--- a/ssl/handshake_server.cc
++++ b/ssl/handshake_server.cc
+@@ -23,6 +23,7 @@
+ #include <openssl/bytestring.h>
+ #include <openssl/cipher.h>
+ #include <openssl/curve25519.h>
++#include <openssl/dh.h>
+ #include <openssl/digest.h>
+ #include <openssl/ec.h>
+ #include <openssl/ecdsa.h>
+@@ -233,6 +234,9 @@ static TLS12ServerParams choose_params(SSL_HANDSHAKE *hs,
+   if (has_ecdhe_group) {
+     mask_k |= SSL_kECDHE;
+   }
++  if (hs->config->tmp_dh != nullptr) {
++    mask_k |= SSL_kDHE;
++  }
+   if (hs->config->psk_server_callback != nullptr) {
+     mask_k |= SSL_kPSK;
+     mask_a |= SSL_aPSK;
+@@ -1055,7 +1059,25 @@ static enum ssl_hs_wait_t do_send_server_certificate(SSL_HANDSHAKE *hs) {
+       }
+     }
+ 
+-    if (alg_k & SSL_kECDHE) {
++    if (alg_k & SSL_kDHE) {
++      // The group's prime, generator and public key, Ys padded to the prime's
++      // length as OpenSSL pads it.
++      hs->dhe_key.reset(DHparams_dup(hs->config->tmp_dh.get()));
++      if (hs->dhe_key == nullptr || !DH_generate_key(hs->dhe_key.get())) {
++        return ssl_hs_error;
++      }
++      const BIGNUM *p = DH_get0_p(hs->dhe_key.get());
++      const BIGNUM *g = DH_get0_g(hs->dhe_key.get());
++      const BIGNUM *pub_key = DH_get0_pub_key(hs->dhe_key.get());
++      if (!CBB_add_u16_length_prefixed(cbb.get(), &child) ||
++          !BN_bn2cbb_padded(&child, BN_num_bytes(p), p) ||
++          !CBB_add_u16_length_prefixed(cbb.get(), &child) ||
++          !BN_bn2cbb_padded(&child, BN_num_bytes(g), g) ||
++          !CBB_add_u16_length_prefixed(cbb.get(), &child) ||
++          !BN_bn2cbb_padded(&child, BN_num_bytes(p), pub_key)) {
++        return ssl_hs_error;
++      }
++    } else if (alg_k & SSL_kECDHE) {
+       assert(hs->new_session->group_id != 0);
+       UniquePtr<SSLKeyShare> ssl_key_share =
+           SSLKeyShare::Create(hs->new_session->group_id);
+@@ -1436,6 +1458,35 @@ static enum ssl_hs_wait_t do_read_client_key_exchange(SSL_HANDSHAKE *hs) {
+       premaster_secret[i] = constant_time_select_8(
+           good, decrypt_buf[padding_len + i], premaster_secret[i]);
+     }
++  } else if (alg_k & SSL_kDHE) {
++    // Parse the ClientKeyExchange's Yc.
++    CBS peer_key;
++    if (!CBS_get_u16_length_prefixed(&client_key_exchange, &peer_key) ||
++        CBS_len(&peer_key) == 0 || CBS_len(&client_key_exchange) != 0) {
++      OPENSSL_PUT_ERROR(SSL, SSL_R_DECODE_ERROR);
++      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECODE_ERROR);
++      return ssl_hs_error;
++    }
++    UniquePtr<BIGNUM> peer(
++        BN_bin2bn(CBS_data(&peer_key), CBS_len(&peer_key), nullptr));
++    if (peer == nullptr || hs->dhe_key == nullptr ||
++        !premaster_secret.InitForOverwrite(DH_size(hs->dhe_key.get()))) {
++      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
++      return ssl_hs_error;
++    }
++
++    // The premaster secret is the shared secret, leading zeros stripped (RFC
++    // 5246, section 8.1.2), as |DH_compute_key| returns it.
++    int secret_len =
++        DH_compute_key(premaster_secret.data(), peer.get(), hs->dhe_key.get());
++    if (secret_len <= 0) {
++      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
++      return ssl_hs_error;
++    }
++    premaster_secret.Shrink(secret_len);
++
++    // The key exchange state may now be discarded.
++    hs->dhe_key.reset();
+   } else if (alg_k & SSL_kECDHE) {
+     // Parse the ClientKeyExchange.
+     CBS ciphertext;
+diff --git a/ssl/internal.h b/ssl/internal.h
+index 8306bc3..79cbdce 100644
+--- a/ssl/internal.h
++++ b/ssl/internal.h
+@@ -35,6 +35,7 @@
+ 
+ #include <openssl/aead.h>
+ #include <openssl/curve25519.h>
++#include <openssl/dh.h>
+ #include <openssl/err.h>
+ #include <openssl/hpke.h>
+ #include <openssl/mem.h>
+@@ -1932,6 +1933,10 @@ struct SSL_HANDSHAKE {
+   // ServerKeyExchange.
+   Array<uint8_t> dh_p, dh_g;
+ 
++  // dhe_key, on servers, is the Diffie-Hellman key of a TLS 1.2 DHE
++  // ServerKeyExchange.
++  UniquePtr<DH> dhe_key;
++
+   // peer_key is the peer's ECDH key for a TLS 1.2 client.
+   Array<uint8_t> peer_key;
+ 
+@@ -3477,6 +3482,10 @@ struct SSL_CONFIG {
+   // PSK-based key exchanges.
+   UniquePtr<char> psk_identity_hint;
+ 
++  // Server-only: tmp_dh is the Diffie-Hellman group of the TLS 1.2 DHE cipher
++  // suites, which are negotiated only with one (see |SSL_set_tmp_dh|).
++  UniquePtr<DH> tmp_dh;
++
+   unsigned (*psk_client_callback)(SSL *ssl, const char *hint, char *identity,
+                                   unsigned max_identity_len, uint8_t *psk,
+                                   unsigned max_psk_len) = nullptr;
+@@ -4172,6 +4181,10 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
+   // PSK-based key exchanges.
+   bssl::UniquePtr<char> psk_identity_hint;
+ 
++  // Server-only: tmp_dh is the default Diffie-Hellman group of the TLS 1.2 DHE
++  // cipher suites (see |SSL_CTX_set_tmp_dh|).
++  bssl::UniquePtr<DH> tmp_dh;
++
+   unsigned (*psk_client_callback)(SSL *ssl, const char *hint, char *identity,
+                                   unsigned max_identity_len, uint8_t *psk,
+                                   unsigned max_psk_len) = nullptr;
+diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
+index 2d4b36f..7cbc640 100644
+--- a/ssl/ssl_lib.cc
++++ b/ssl/ssl_lib.cc
+@@ -570,6 +570,12 @@ SSL *SSL_new(SSL_CTX *ctx) {
+       return nullptr;
+     }
+   }
++  if (ctx->tmp_dh) {
++    ssl->config->tmp_dh.reset(DHparams_dup(ctx->tmp_dh.get()));
++    if (ssl->config->tmp_dh == nullptr) {
++      return nullptr;
++    }
++  }
+   ssl->config->psk_client_callback = ctx->psk_client_callback;
+   ssl->config->psk_server_callback = ctx->psk_server_callback;
+ 
+@@ -2107,9 +2113,21 @@ int SSL_set1_server_supported_groups_hint(SSL *ssl,
+   return ssl->config->server_supported_groups_hint.CopyFrom(span);
+ }
+ 
+-int SSL_CTX_set_tmp_dh(SSL_CTX *ctx, const DH *dh) { return 1; }
++static int set_tmp_dh(UniquePtr<DH> *out, const DH *dh) {
++  out->reset(dh == nullptr ? nullptr : DHparams_dup(dh));
++  return dh == nullptr || *out != nullptr;
++}
++
++int SSL_CTX_set_tmp_dh(SSL_CTX *ctx, const DH *dh) {
++  return set_tmp_dh(&ctx->tmp_dh, dh);
++}
+ 
+-int SSL_set_tmp_dh(SSL *ssl, const DH *dh) { return 1; }
++int SSL_set_tmp_dh(SSL *ssl, const DH *dh) {
++  if (!ssl->config) {
++    return 0;
++  }
++  return set_tmp_dh(&ssl->config->tmp_dh, dh);
++}
+ 
+ STACK_OF(SSL_CIPHER) *SSL_CTX_get_ciphers(const SSL_CTX *ctx) {
+   return ctx->cipher_list->ciphers.get();
