@@ -1,8 +1,21 @@
+diff --git a/include/openssl/dh.h b/include/openssl/dh.h
+index acba59f..a1c8de0 100644
+--- a/include/openssl/dh.h
++++ b/include/openssl/dh.h
+@@ -54,7 +54,7 @@ OPENSSL_EXPORT int DH_up_ref(DH *dh);
+ 
+ // OPENSSL_DH_MAX_MODULUS_BITS is the maximum supported Diffie-Hellman group
+ // modulus, in bits.
+-#define OPENSSL_DH_MAX_MODULUS_BITS 8192
++#define OPENSSL_DH_MAX_MODULUS_BITS 10000
+ 
+ // DH_bits returns the size of |dh|'s group modulus, in bits.
+ OPENSSL_EXPORT unsigned DH_bits(const DH *dh);
 diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
-index 9617ac4..1fb709d 100644
+index e062bf6..d5a1901 100644
 --- a/include/openssl/ssl.h
 +++ b/include/openssl/ssl.h
-@@ -5990,12 +5990,23 @@ OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_expansion(SSL *ssl);
+@@ -5992,12 +5992,28 @@ OPENSSL_EXPORT const COMP_METHOD *SSL_get_current_expansion(SSL *ssl);
  // SSL_get_server_tmp_key returns zero.
  OPENSSL_EXPORT int SSL_get_server_tmp_key(SSL *ssl, EVP_PKEY **out_key);
  
@@ -25,11 +38,16 @@ index 9617ac4..1fb709d 100644
 +// configuration was shed.
 +OPENSSL_EXPORT int SSL_set_min_dhe_bits(SSL *ssl, uint16_t bits);
 +
++// SSL_SESSION_get_dhe_bits returns the size, in bits, of the prime of the TLS
++// 1.2 DHE group |session| was established with, on either side, or zero if it
++// used none.
++OPENSSL_EXPORT uint16_t SSL_SESSION_get_dhe_bits(const SSL_SESSION *session);
++
  // SSL_CTX_set_tmp_dh_callback does nothing.
  OPENSSL_EXPORT void SSL_CTX_set_tmp_dh_callback(
      SSL_CTX *ctx, DH *(*cb)(SSL *ssl, int is_export, int keylength));
 diff --git a/ssl/handshake_client.cc b/ssl/handshake_client.cc
-index f589a6d..93e9579 100644
+index f589a6d..d4b9edb 100644
 --- a/ssl/handshake_client.cc
 +++ b/ssl/handshake_client.cc
 @@ -441,6 +441,10 @@ static enum ssl_hs_wait_t do_start_connect(SSL_HANDSHAKE *hs) {
@@ -57,16 +75,21 @@ index f589a6d..93e9579 100644
        BN_cmp_word(g.get(), 1) <= 0 || BN_cmp(g.get(), p.get()) >= 0) {
      OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_DH_P_LENGTH);
      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_ILLEGAL_PARAMETER);
-@@ -1510,6 +1516,7 @@ static bool ssl_send_dhe_client_key_exchange(SSL_HANDSHAKE *hs, CBB *body,
+@@ -1510,6 +1516,12 @@ static bool ssl_send_dhe_client_key_exchange(SSL_HANDSHAKE *hs, CBB *body,
    }
    p.release();
    g.release();
 +  hs->new_session->dhe_bits = static_cast<uint16_t>(bits);
++  // A private key as long as OpenSSL's for the group.
++  if (!DH_set_length(dh.get(), ssl_dh_named_group_private_bits(dh.get()))) {
++    ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_INTERNAL_ERROR);
++    return false;
++  }
  
    // The premaster secret is the shared value without leading zero bytes. See
    // RFC 5246, section 8.1.2. |DH_compute_key| rejects an invalid peer value.
 diff --git a/ssl/handshake_server.cc b/ssl/handshake_server.cc
-index 0ffc246..98b9133 100644
+index 0ffc246..ef76a06 100644
 --- a/ssl/handshake_server.cc
 +++ b/ssl/handshake_server.cc
 @@ -23,6 +23,7 @@
@@ -87,19 +110,23 @@ index 0ffc246..98b9133 100644
    if (hs->config->psk_server_callback != nullptr) {
      mask_k |= SSL_kPSK;
      mask_a |= SSL_aPSK;
-@@ -1055,7 +1059,25 @@ static enum ssl_hs_wait_t do_send_server_certificate(SSL_HANDSHAKE *hs) {
+@@ -1055,7 +1059,29 @@ static enum ssl_hs_wait_t do_send_server_certificate(SSL_HANDSHAKE *hs) {
        }
      }
  
 -    if (alg_k & SSL_kECDHE) {
 +    if (alg_k & SSL_kDHE) {
 +      // The group's prime, generator and public key, Ys padded to the prime's
-+      // length as OpenSSL pads it.
++      // length as OpenSSL pads it, its private key as long as OpenSSL's.
 +      hs->dhe_key.reset(DHparams_dup(hs->config->tmp_dh.get()));
-+      if (hs->dhe_key == nullptr || !DH_generate_key(hs->dhe_key.get())) {
++      if (hs->dhe_key == nullptr ||
++          !DH_set_length(hs->dhe_key.get(),
++                         ssl_dh_named_group_private_bits(hs->dhe_key.get())) ||
++          !DH_generate_key(hs->dhe_key.get())) {
 +        return ssl_hs_error;
 +      }
 +      const BIGNUM *p = DH_get0_p(hs->dhe_key.get());
++      hs->new_session->dhe_bits = static_cast<uint16_t>(BN_num_bits(p));
 +      const BIGNUM *g = DH_get0_g(hs->dhe_key.get());
 +      const BIGNUM *pub_key = DH_get0_pub_key(hs->dhe_key.get());
 +      if (!CBB_add_u16_length_prefixed(cbb.get(), &child) ||
@@ -114,7 +141,7 @@ index 0ffc246..98b9133 100644
        assert(hs->new_session->group_id != 0);
        UniquePtr<SSLKeyShare> ssl_key_share =
            SSLKeyShare::Create(hs->new_session->group_id);
-@@ -1436,6 +1458,35 @@ static enum ssl_hs_wait_t do_read_client_key_exchange(SSL_HANDSHAKE *hs) {
+@@ -1436,6 +1462,35 @@ static enum ssl_hs_wait_t do_read_client_key_exchange(SSL_HANDSHAKE *hs) {
        premaster_secret[i] = constant_time_select_8(
            good, decrypt_buf[padding_len + i], premaster_secret[i]);
      }
@@ -151,7 +178,7 @@ index 0ffc246..98b9133 100644
      // Parse the ClientKeyExchange.
      CBS ciphertext;
 diff --git a/ssl/internal.h b/ssl/internal.h
-index 3bf4328..6401c7e 100644
+index 5a2fc64..7420ef3 100644
 --- a/ssl/internal.h
 +++ b/ssl/internal.h
 @@ -35,6 +35,7 @@
@@ -162,7 +189,20 @@ index 3bf4328..6401c7e 100644
  #include <openssl/err.h>
  #include <openssl/hpke.h>
  #include <openssl/mem.h>
-@@ -1932,6 +1933,10 @@ struct SSL_HANDSHAKE {
+@@ -356,6 +357,12 @@ bool ssl_cipher_requires_server_key_exchange(const SSL_CIPHER *cipher);
+ // it returns zero.
+ size_t ssl_cipher_get_record_split_len(const SSL_CIPHER *cipher);
+ 
++// ssl_dh_named_group_private_bits returns the length, in bits, OpenSSL gives
++// the private keys of |dh|'s group when it is one of the safe-prime groups of
++// RFC 7919 or RFC 3526, whose structure makes such short exponents safe, else
++// zero for a full-length one.
++unsigned ssl_dh_named_group_private_bits(const DH *dh);
++
+ // ssl_choose_tls13_cipher returns an |SSL_CIPHER| corresponding with the best
+ // available from |cipher_suites| compatible with |version| and |policy|. It
+ // returns NULL if there isn't a compatible cipher. |has_aes_hw| indicates if
+@@ -1932,6 +1939,10 @@ struct SSL_HANDSHAKE {
    // ServerKeyExchange.
    Array<uint8_t> dh_p, dh_g;
  
@@ -173,7 +213,7 @@ index 3bf4328..6401c7e 100644
    // peer_key is the peer's ECDH key for a TLS 1.2 client.
    Array<uint8_t> peer_key;
  
-@@ -3481,6 +3486,14 @@ struct SSL_CONFIG {
+@@ -3481,6 +3492,14 @@ struct SSL_CONFIG {
    // PSK-based key exchanges.
    UniquePtr<char> psk_identity_hint;
  
@@ -188,7 +228,7 @@ index 3bf4328..6401c7e 100644
    unsigned (*psk_client_callback)(SSL *ssl, const char *hint, char *identity,
                                    unsigned max_identity_len, uint8_t *psk,
                                    unsigned max_psk_len) = nullptr;
-@@ -4176,6 +4189,10 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
+@@ -4177,6 +4196,10 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
    // PSK-based key exchanges.
    bssl::UniquePtr<char> psk_identity_hint;
  
@@ -199,22 +239,69 @@ index 3bf4328..6401c7e 100644
    unsigned (*psk_client_callback)(SSL *ssl, const char *hint, char *identity,
                                    unsigned max_identity_len, uint8_t *psk,
                                    unsigned max_psk_len) = nullptr;
-@@ -4473,6 +4490,10 @@ struct ssl_session_st : public bssl::RefCounted<ssl_session_st> {
+@@ -4475,6 +4498,10 @@ struct ssl_session_st : public bssl::RefCounted<ssl_session_st> {
    // if not applicable or unknown.
    uint16_t group_id = 0;
  
-+  // dhe_bits, on clients, is the size of the TLS 1.2 DHE group used to establish
-+  // this session or zero if not applicable or unknown.
++  // dhe_bits is the size of the TLS 1.2 DHE group used to establish this
++  // session or zero if not applicable or unknown.
 +  uint16_t dhe_bits = 0;
 +
    // peer_signature_algorithm is the signature algorithm used to authenticate
    // the peer, or zero if not applicable or unknown.
    uint16_t peer_signature_algorithm = 0;
+diff --git a/ssl/ssl_asn1.cc b/ssl/ssl_asn1.cc
+index ad43e77..06217f7 100644
+--- a/ssl/ssl_asn1.cc
++++ b/ssl/ssl_asn1.cc
+@@ -150,6 +150,9 @@ static const CBS_ASN1_TAG kPeerCertTypeTag =
+     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 32;
+ static const CBS_ASN1_TAG kPeerRawPublicKeyTag =
+     CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 33;
++// A WireMason field, numbered clear of BoringSSL's.
++static const CBS_ASN1_TAG kDHEBitsTag =
++    CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 100;
+ 
+ 
+ static int SSL_SESSION_to_bytes_full(const SSL_SESSION *in, CBB *cbb,
+@@ -381,6 +384,13 @@ static int SSL_SESSION_to_bytes_full(const SSL_SESSION *in, CBB *cbb,
+     }
+   }
+ 
++  if (in->dhe_bits != 0) {
++    if (!CBB_add_asn1(&session, &child, kDHEBitsTag) ||
++        !CBB_add_asn1_uint64(&child, in->dhe_bits)) {
++      return 0;
++    }
++  }
++
+   return CBB_flush(cbb);
+ }
+ 
+@@ -766,6 +776,10 @@ UniquePtr<SSL_SESSION> SSL_SESSION_parse(CBS *cbs,
+     }
+   }
+ 
++  if (!SSL_SESSION_parse_u16(&session, &ret->dhe_bits, kDHEBitsTag, 0)) {
++    return nullptr;
++  }
++
+   // End of fields. There should be no trailing data.
+   if (CBS_len(&session) != 0) {
+     OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SSL_SESSION);
 diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
-index 2d4b36f..b6353de 100644
+index 8d978e5..7f31386 100644
 --- a/ssl/ssl_lib.cc
 +++ b/ssl/ssl_lib.cc
-@@ -570,6 +570,12 @@ SSL *SSL_new(SSL_CTX *ctx) {
+@@ -31,6 +31,7 @@
+ #include <openssl/mem.h>
+ #include <openssl/nid.h>
+ #include <openssl/rand.h>
++#include <openssl/sha.h>
+ 
+ #include "../crypto/bytestring/internal.h"
+ #include "../crypto/internal.h"
+@@ -571,6 +572,12 @@ SSL *SSL_new(SSL_CTX *ctx) {
        return nullptr;
      }
    }
@@ -227,7 +314,7 @@ index 2d4b36f..b6353de 100644
    ssl->config->psk_client_callback = ctx->psk_client_callback;
    ssl->config->psk_server_callback = ctx->psk_server_callback;
  
-@@ -2107,9 +2113,29 @@ int SSL_set1_server_supported_groups_hint(SSL *ssl,
+@@ -2108,9 +2115,113 @@ int SSL_set1_server_supported_groups_hint(SSL *ssl,
    return ssl->config->server_supported_groups_hint.CopyFrom(span);
  }
  
@@ -255,6 +342,90 @@ index 2d4b36f..b6353de 100644
 +  }
 +  ssl->config->min_dhe_bits = bits;
 +  return 1;
++}
++
++uint16_t SSL_SESSION_get_dhe_bits(const SSL_SESSION *session) {
++  return session->dhe_bits;
++}
++
++unsigned bssl::ssl_dh_named_group_private_bits(const DH *dh) {
++  // Each group's generator is 2, and its prime is named by its SHA-256 (of its
++  // big-endian bytes). The lengths are OpenSSL's, twice the group's security.
++  static const struct {
++    uint8_t prime_sha256[SHA256_DIGEST_LENGTH];
++    unsigned private_bits;
++  } kNamedGroups[] = {
++    // RFC 7919 ffdhe2048.
++    {{0x9c, 0xd3, 0xb7, 0xf3, 0x36, 0x87, 0x2f, 0x46, 0xc0, 0x94, 0x28,
++      0xd1, 0xbb, 0xc1, 0x98, 0x77, 0xa4, 0xd4, 0x40, 0x51, 0x2c, 0xda,
++      0x8d, 0x1c, 0x1c, 0xf0, 0xcd, 0x6e, 0x33, 0x69, 0x89, 0x66},
++     225},
++    // RFC 7919 ffdhe3072.
++    {{0x0e, 0xaf, 0x67, 0xdb, 0x3a, 0x83, 0x91, 0x56, 0xd5, 0x01, 0x34,
++      0x94, 0xa5, 0x31, 0x8a, 0x77, 0x2b, 0x56, 0x97, 0xd2, 0x70, 0xd7,
++      0x21, 0xf3, 0x7f, 0x09, 0x2e, 0xfc, 0x69, 0xea, 0x5a, 0x17},
++     275},
++    // RFC 7919 ffdhe4096.
++    {{0x46, 0x48, 0x41, 0x42, 0x24, 0xac, 0x88, 0x1b, 0x3d, 0x0d, 0xc5,
++      0x9b, 0x46, 0x6f, 0x96, 0xd0, 0x6a, 0x55, 0x82, 0x78, 0x77, 0x68,
++      0x07, 0x79, 0x7e, 0xcf, 0x1f, 0x66, 0xff, 0x39, 0x7b, 0x3e},
++     325},
++    // RFC 7919 ffdhe6144.
++    {{0x22, 0x7a, 0xc9, 0x06, 0x6b, 0x3d, 0xdd, 0x9e, 0x19, 0x36, 0x70,
++      0xcd, 0xa2, 0x38, 0x8f, 0xa8, 0x84, 0xf6, 0x5b, 0xa0, 0xcf, 0x98,
++      0xb7, 0x42, 0xd1, 0xfe, 0x77, 0xa6, 0x68, 0x7c, 0x79, 0xc7},
++     375},
++    // RFC 7919 ffdhe8192.
++    {{0x77, 0x0b, 0x14, 0xef, 0xaf, 0x6f, 0x04, 0x99, 0x29, 0xc5, 0x23,
++      0x11, 0x3b, 0x3f, 0xa9, 0x9a, 0x8d, 0x11, 0xda, 0xb1, 0xb1, 0x8a,
++      0xf3, 0x60, 0x95, 0x90, 0x12, 0x20, 0x75, 0xd1, 0x98, 0x33},
++     400},
++    // RFC 3526 MODP 1536.
++    {{0x64, 0xfc, 0xc8, 0x3e, 0xc4, 0x03, 0x93, 0x0b, 0xf1, 0x83, 0x93,
++      0xdb, 0xc8, 0x83, 0xcc, 0xaa, 0x1f, 0xbb, 0x08, 0xac, 0x87, 0x6f,
++      0x77, 0xf7, 0xaa, 0x99, 0x74, 0x8c, 0xa9, 0x45, 0x01, 0x9b},
++     200},
++    // RFC 3526 MODP 2048.
++    {{0xd6, 0x64, 0x36, 0xf7, 0x9b, 0xbd, 0x6b, 0x2e, 0x38, 0xc0, 0xff,
++      0xbd, 0x07, 0x9b, 0xe9, 0x04, 0xd2, 0x64, 0x14, 0x15, 0xe2, 0xe6,
++      0x71, 0x40, 0xe0, 0x94, 0x48, 0xbe, 0x9a, 0x60, 0x89, 0x0e},
++     225},
++    // RFC 3526 MODP 3072.
++    {{0x48, 0xcf, 0x8b, 0x09, 0x2f, 0xbc, 0xe4, 0x35, 0x9d, 0x98, 0x71,
++      0xab, 0xf7, 0x4f, 0x98, 0xe2, 0x5b, 0x61, 0x63, 0x37, 0x9e, 0xaa,
++      0x15, 0xcd, 0x90, 0x87, 0xe8, 0x00, 0xc6, 0xd1, 0xc5, 0x5c},
++     275},
++    // RFC 3526 MODP 4096.
++    {{0x4e, 0xe9, 0x51, 0x87, 0x68, 0x2b, 0xcb, 0x23, 0x0a, 0xd2, 0x6a,
++      0x95, 0x20, 0x5f, 0x69, 0x20, 0xe8, 0x47, 0x08, 0xf6, 0x25, 0x1b,
++      0x38, 0x94, 0x32, 0x9b, 0x09, 0xec, 0x23, 0x91, 0x9e, 0x33},
++     325},
++    // RFC 3526 MODP 6144.
++    {{0xd1, 0xbf, 0xe6, 0xd0, 0x92, 0x5c, 0xe7, 0xe4, 0xda, 0x26, 0x2b,
++      0x62, 0x86, 0x15, 0x14, 0xa7, 0x75, 0x5e, 0x35, 0x83, 0x1e, 0x42,
++      0x9f, 0x34, 0x3e, 0x7b, 0x86, 0x48, 0x48, 0x65, 0x7e, 0xfd},
++     375},
++    // RFC 3526 MODP 8192.
++    {{0x39, 0xab, 0x4f, 0xea, 0xb9, 0x50, 0xa3, 0x12, 0x8f, 0xb7, 0x1a,
++      0xcc, 0xb9, 0xfc, 0x39, 0x65, 0xd8, 0x57, 0x01, 0x2e, 0x08, 0x19,
++      0x98, 0xa8, 0x59, 0x96, 0xe3, 0xea, 0x8b, 0x3c, 0x3b, 0xcf},
++     400},
++  };
++  const BIGNUM *p = DH_get0_p(dh);
++  Array<uint8_t> prime;
++  if (!BN_is_word(DH_get0_g(dh), 2) ||
++      !prime.InitForOverwrite(BN_num_bytes(p))) {
++    return 0;
++  }
++  BN_bn2bin(p, prime.data());
++  uint8_t digest[SHA256_DIGEST_LENGTH];
++  SHA256(prime.data(), prime.size(), digest);
++  for (const auto &group : kNamedGroups) {
++    if (OPENSSL_memcmp(group.prime_sha256, digest, sizeof(digest)) == 0) {
++      return group.private_bits;
++    }
++  }
++  return 0;
 +}
  
  STACK_OF(SSL_CIPHER) *SSL_CTX_get_ciphers(const SSL_CTX *ctx) {

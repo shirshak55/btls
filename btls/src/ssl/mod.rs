@@ -3127,6 +3127,15 @@ impl SslSessionRef {
         unsafe { ffi::SSL_SESSION_get_timeout(self.as_ptr()) }
     }
 
+    /// Returns the size, in bits, of the prime of the TLS 1.2 DHE group the session was
+    /// established with, on either side, or `None` if it used none.
+    #[corresponds(SSL_SESSION_get_dhe_bits)]
+    #[must_use]
+    pub fn dhe_bits(&self) -> Option<u16> {
+        let bits = unsafe { ffi::SSL_SESSION_get_dhe_bits(self.as_ptr()) };
+        (bits != 0).then_some(bits)
+    }
+
     /// Returns the session's TLS protocol version.
     #[corresponds(SSL_SESSION_get_protocol_version)]
     #[must_use]
