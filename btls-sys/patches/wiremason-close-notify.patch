@@ -1,0 +1,44 @@
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index c70b77c..103de5a 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -4826,6 +4826,14 @@ OPENSSL_EXPORT const char *SSL_alert_desc_string_long(int value);
+ // calls must use the same |alert| parameter.
+ OPENSSL_EXPORT int SSL_send_fatal_alert(SSL *ssl, uint8_t alert);
+ 
++// SSL_send_close_notify sends a warning-level close_notify alert over |ssl|,
++// even in the middle of a handshake, where |SSL_shutdown| sends none. It
++// returns one on success and <= 0 on error, like |SSL_send_fatal_alert|. Once
++// it has been called, future calls to |SSL_write| fail, and no other alert is
++// sent: a handshake callback that calls it and then fails the handshake sends
++// no fatal alert after it.
++OPENSSL_EXPORT int SSL_send_close_notify(SSL *ssl);
++
+ 
+ // ex_data functions.
+ //
+diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
+index 641894a..64a8278 100644
+--- a/ssl/ssl_lib.cc
++++ b/ssl/ssl_lib.cc
+@@ -1117,6 +1117,20 @@ int SSL_send_fatal_alert(SSL *ssl, uint8_t alert) {
+   return ssl_send_alert_impl(ssl, SSL3_AL_FATAL, alert);
+ }
+ 
++int SSL_send_close_notify(SSL *ssl) {
++  if (ssl->s3->alert_dispatch) {
++    if (ssl->s3->send_alert[0] != SSL3_AL_WARNING ||
++        ssl->s3->send_alert[1] != SSL_AD_CLOSE_NOTIFY) {
++      // We are already attempting to write a different alert.
++      OPENSSL_PUT_ERROR(SSL, SSL_R_PROTOCOL_IS_SHUTDOWN);
++      return -1;
++    }
++    return ssl->method->dispatch_alert(ssl);
++  }
++
++  return ssl_send_alert_impl(ssl, SSL3_AL_WARNING, SSL_AD_CLOSE_NOTIFY);
++}
++
+ int SSL_set_quic_transport_params(SSL *ssl, const uint8_t *params,
+                                   size_t params_len) {
+   return ssl->config &&

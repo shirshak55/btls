@@ -678,10 +678,15 @@ where
     let output = unsafe { slice::from_raw_parts_mut(out, max_out) };
     let out_len = unsafe { &mut *out_len };
 
+    // The connection's own method (see `SslRef::set_private_key_method`), else its context's.
+    let ssl_method = ssl.ex_data(Ssl::cached_ex_index::<Arc<M>>()).cloned();
     let ssl_context = ssl.ssl_context().to_owned();
-    let method = ssl_context
-        .ex_data(SslContext::cached_ex_index::<M>())
-        .expect("BUG: private key method missing");
+    let method: &M = match &ssl_method {
+        Some(method) => method,
+        None => ssl_context
+            .ex_data(SslContext::cached_ex_index::<M>())
+            .expect("BUG: private key method missing"),
+    };
 
     match callback(method, ssl, output) {
         Ok(written) => {

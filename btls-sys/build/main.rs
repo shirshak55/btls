@@ -499,6 +499,9 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
     println!("cargo:warning=applying WireMason RSASSA-PSS certificate verification to BoringSSL");
     apply_patch(config, "wiremason-rsa-pss.patch")?;
 
+    println!("cargo:warning=applying WireMason OpenSSL's RSA key bounds to BoringSSL");
+    apply_patch(config, "wiremason-rsa-limits.patch")?;
+
     println!("cargo:warning=applying WireMason unencrypted TLS 1.3 client alerts to BoringSSL");
     apply_patch(config, "wiremason-plain-alerts.patch")?;
 
@@ -507,6 +510,9 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
 
     println!("cargo:warning=applying WireMason TLS 1.2 verification after the server flight to BoringSSL");
     apply_patch(config, "wiremason-verify-after-flight.patch")?;
+
+    println!("cargo:warning=applying WireMason close_notify mid-handshake to BoringSSL");
+    apply_patch(config, "wiremason-close-notify.patch")?;
 
     Ok(())
 }

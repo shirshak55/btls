@@ -278,7 +278,7 @@ index ad43e77..06217f7 100644
    if (CBS_len(&session) != 0) {
      OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SSL_SESSION);
 diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
-index 8d978e5..475654c 100644
+index 8d978e5..a13e9ed 100644
 --- a/ssl/ssl_lib.cc
 +++ b/ssl/ssl_lib.cc
 @@ -31,6 +31,7 @@
@@ -302,7 +302,7 @@ index 8d978e5..475654c 100644
    ssl->config->psk_client_callback = ctx->psk_client_callback;
    ssl->config->psk_server_callback = ctx->psk_server_callback;
  
-@@ -2108,9 +2115,190 @@ int SSL_set1_server_supported_groups_hint(SSL *ssl,
+@@ -2108,9 +2115,221 @@ int SSL_set1_server_supported_groups_hint(SSL *ssl,
    return ssl->config->server_supported_groups_hint.CopyFrom(span);
  }
  
@@ -335,25 +335,56 @@ index 8d978e5..475654c 100644
 +  return session->dhe_bits;
 +}
 +
-+// is_safe_prime returns whether |p| is a safe prime, 2q + 1 for a prime q, by
-+// two variable-time exponentiations, as an origin's group is public: q passes
-+// the Fermat test to base 2, and then p is prime by Pocklington's criterion
-+// with base 2, 2^(p - 1) = 1 (mod p) and 3 not dividing p. So a prime an origin
-+// makes up for each connection, safe or not, costs no more than the key
-+// exchange whose exponents it would shorten. An origin's group, for which this
-+// is asked, is chosen by the peer that ends the connection anyway, so a
-+// composite crafted to pass would weaken only what it already reads.
++// is_safe_prime returns whether |p| is a safe prime, 2q + 1 for a prime q: q
++// passes three Miller-Rabin rounds with random bases, which a composite passes
++// with probability at most 1/64, and then p is prime by Pocklington's criterion
++// with base 2, 2^(p - 1) = 1 (mod p) and 3 not dividing p. The exponentiations
++// are variable-time, as an origin's group is public: a safe prime costs four,
++// less than two key exchanges with full-length exponents, once (the result is
++// cached), where |BN_primality_test|'s at least 16 blinded rounds would cost
++// about eight times more. An origin's group, for which this is asked, is
++// chosen by the peer that ends the connection anyway, so a composite crafted to
++// pass would weaken only what it already reads.
 +static bool is_safe_prime(const BIGNUM *p) {
 +  UniquePtr<BN_CTX> ctx(BN_CTX_new());
-+  UniquePtr<BIGNUM> q(BN_new()), exponent(BN_new()), r(BN_new());
-+  return ctx != nullptr && q != nullptr && exponent != nullptr &&
-+         r != nullptr && BN_is_odd(p) && BN_mod_word(p, 3) != 0 &&
-+         BN_rshift1(q.get(), p) && BN_is_odd(q.get()) &&
-+         BN_sub(exponent.get(), q.get(), BN_value_one()) &&
-+         BN_mod_exp_mont_word(r.get(), 2, exponent.get(), q.get(), ctx.get(),
-+                              nullptr) &&
-+         BN_is_one(r.get()) && BN_copy(exponent.get(), p) &&
-+         BN_sub_word(exponent.get(), 1) &&
++  UniquePtr<BIGNUM> q(BN_new()), q_minus_1(BN_new()), d(BN_new()),
++      base(BN_new()), r(BN_new());
++  if (ctx == nullptr || q == nullptr || q_minus_1 == nullptr || d == nullptr ||
++      base == nullptr || r == nullptr || !BN_is_odd(p) ||
++      BN_mod_word(p, 3) == 0 || !BN_rshift1(q.get(), p) ||
++      !BN_is_odd(q.get()) ||
++      !BN_sub(q_minus_1.get(), q.get(), BN_value_one())) {
++    return false;
++  }
++  // q - 1 = 2^s * d with d odd.
++  int s = 1;
++  while (!BN_is_bit_set(q_minus_1.get(), s)) {
++    s++;
++  }
++  UniquePtr<BN_MONT_CTX> mont(BN_MONT_CTX_new_for_modulus(q.get(), ctx.get()));
++  if (mont == nullptr || !BN_rshift(d.get(), q_minus_1.get(), s)) {
++    return false;
++  }
++  for (int round = 0; round < 3; round++) {
++    if (!BN_rand_range_ex(base.get(), 2, q_minus_1.get()) ||
++        !BN_mod_exp_mont(r.get(), base.get(), d.get(), q.get(), ctx.get(),
++                         mont.get())) {
++      return false;
++    }
++    bool passed =
++        BN_is_one(r.get()) || BN_cmp(r.get(), q_minus_1.get()) == 0;
++    for (int i = 1; !passed && i < s; i++) {
++      if (!BN_mod_sqr(r.get(), r.get(), q.get(), ctx.get())) {
++        return false;
++      }
++      passed = BN_cmp(r.get(), q_minus_1.get()) == 0;
++    }
++    if (!passed) {
++      return false;
++    }
++  }
++  UniquePtr<BIGNUM> exponent(BN_dup(p));
++  return exponent != nullptr && BN_sub_word(exponent.get(), 1) &&
 +         BN_mod_exp_mont_word(r.get(), 2, exponent.get(), p, ctx.get(),
 +                              nullptr) &&
 +         BN_is_one(r.get());

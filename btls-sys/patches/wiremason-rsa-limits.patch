@@ -1,0 +1,136 @@
+diff --git a/crypto/fipsmodule/rsa/rsa_impl.cc.inc b/crypto/fipsmodule/rsa/rsa_impl.cc.inc
+index ba08ae7..74bcfa8 100644
+--- a/crypto/fipsmodule/rsa/rsa_impl.cc.inc
++++ b/crypto/fipsmodule/rsa/rsa_impl.cc.inc
+@@ -53,10 +53,9 @@ int bssl::rsa_check_public_key(const RSA *rsa) {
+     return 0;
+   }
+ 
+-  if (n_bits < OPENSSL_RSA_MIN_MODULUS_BITS) {
+-    OPENSSL_PUT_ERROR(RSA, RSA_R_KEY_SIZE_TOO_SMALL);
+-    return 0;
+-  }
++  // WireMason: no lower bound on n, as in OpenSSL, which bounds only key
++  // generation (to 512 bits): the padding of each operation checks that it
++  // fits, so the keys an OpenSSL peer at security level 0 uses work.
+ 
+   // RSA moduli must be positive and odd. In addition to being necessary for RSA
+   // in general, we cannot setup Montgomery reduction with even moduli.
+@@ -65,7 +64,11 @@ int bssl::rsa_check_public_key(const RSA *rsa) {
+     return 0;
+   }
+ 
+-  static const unsigned kMaxExponentBits = 33;
++  // WireMason: e is bounded as OpenSSL bounds it (rsa_ossl.c), to below n and,
++  // when n is over 3072 bits, to 64 bits, rather than to 33 bits, so a peer's
++  // key OpenSSL verifies with works here, and a key minted with it signs.
++  static const unsigned kSmallModulusBits = 3072;
++  static const unsigned kMaxExponentBits = 64;
+   if (impl->e != nullptr) {
+     // Reject e = 1, negative e, and even e. e must be odd to be relatively
+     // prime with phi(n).
+@@ -75,31 +78,16 @@ int bssl::rsa_check_public_key(const RSA *rsa) {
+       OPENSSL_PUT_ERROR(RSA, RSA_R_BAD_E_VALUE);
+       return 0;
+     }
+-    if (impl->flags & RSA_FLAG_LARGE_PUBLIC_EXPONENT) {
+-      // The caller has requested disabling DoS protections. Still, e must be
+-      // less than n.
+-      if (BN_ucmp(impl->n.get(), impl->e.get()) <= 0) {
+-        OPENSSL_PUT_ERROR(RSA, RSA_R_BAD_E_VALUE);
+-        return 0;
+-      }
+-    } else {
+-      // Mitigate DoS attacks by limiting the exponent size. 33 bits was chosen
+-      // as the limit based on the recommendations in [1] and [2]. Windows
+-      // CryptoAPI doesn't support values larger than 32 bits [3], so it is
+-      // unlikely that exponents larger than 32 bits are being used for anything
+-      // Windows commonly does.
+-      //
+-      // [1] https://www.imperialviolet.org/2012/03/16/rsae.html
+-      // [2] https://www.imperialviolet.org/2012/03/17/rsados.html
+-      // [3] https://msdn.microsoft.com/en-us/library/aa387685(VS.85).aspx
+-      if (e_bits > kMaxExponentBits) {
+-        OPENSSL_PUT_ERROR(RSA, RSA_R_BAD_E_VALUE);
+-        return 0;
+-      }
+-
+-      // The upper bound on |e_bits| and lower bound on |n_bits| imply e is
+-      // bounded by n.
+-      assert(BN_ucmp(impl->n.get(), impl->e.get()) > 0);
++    if (BN_ucmp(impl->n.get(), impl->e.get()) <= 0) {
++      OPENSSL_PUT_ERROR(RSA, RSA_R_BAD_E_VALUE);
++      return 0;
++    }
++    // Unless the caller disabled DoS protections, limit the exponent size of
++    // large moduli.
++    if (!(impl->flags & RSA_FLAG_LARGE_PUBLIC_EXPONENT) &&
++        n_bits > kSmallModulusBits && e_bits > kMaxExponentBits) {
++      OPENSSL_PUT_ERROR(RSA, RSA_R_BAD_E_VALUE);
++      return 0;
+     }
+   } else if (!(impl->flags & RSA_FLAG_NO_PUBLIC_EXPONENT)) {
+     OPENSSL_PUT_ERROR(RSA, RSA_R_VALUE_MISSING);
+@@ -459,8 +447,9 @@ int bssl::rsa_default_private_transform(RSA *rsa, uint8_t *out,
+   // works when the CRT isn't used. That attack is much less likely to succeed
+   // than the CRT attack, but there have likely been improvements since 1997.
+   //
+-  // This check is cheap assuming |e| is small, which we require in
+-  // |rsa_check_public_key|.
++  // This check is cheap assuming |e| is small. (WireMason: |e| of a modulus up
++  // to 3072 bits may be as large as OpenSSL allows, making it a public-key
++  // operation with that exponent.)
+   if (impl->e != nullptr) {
+     BIGNUM *vrfy = BN_CTX_get(ctx.get());
+     if (vrfy == nullptr ||
+diff --git a/crypto/rsa/rsa_test.cc b/crypto/rsa/rsa_test.cc
+index a7052b3..4bcc0d8 100644
+--- a/crypto/rsa/rsa_test.cc
++++ b/crypto/rsa/rsa_test.cc
+@@ -1375,15 +1375,16 @@ TEST(RSATest, LargeE) {
+   const BIGNUM *q = RSA_get0_q(key.get());
+   const BIGNUM *iqmp = RSA_get0_iqmp(key.get());
+ 
+-  // By default, the large exponent is not allowed as e.
++  // WireMason: as in OpenSSL, any e below a modulus of up to 3072 bits is
++  // allowed by default, so this 1024-bit key with its large e works with the
++  // default APIs too.
+   UniquePtr<RSA> pub(RSA_new_public_key(n, /*e=*/d));
+-  EXPECT_FALSE(pub);
++  EXPECT_TRUE(pub);
+   UniquePtr<RSA> priv(RSA_new_private_key(n, /*e=*/d, /*d=*/e, p, q,
+                                           /*dmp1=*/e, /*dmq1=*/e, iqmp));
+-  EXPECT_FALSE(priv);
++  EXPECT_TRUE(priv);
+ 
+-  // Constructing such a key piecemeal gives back an object that fails all
+-  // operations.
++  // Constructing such a key piecemeal gives back an object that works too.
+   priv = NewRSAPrivateUnchecked(n, d, e, /*p=*/nullptr, /*q=*/nullptr,
+                                 /*dmp1=*/nullptr, /*dmq1=*/nullptr,
+                                 /*iqmp=*/nullptr);
+@@ -1392,7 +1393,7 @@ TEST(RSATest, LargeE) {
+   static const uint8_t kDigest[32] = {0};
+   std::vector<uint8_t> sig(RSA_size(priv.get()));
+   size_t len;
+-  EXPECT_FALSE(RSA_sign_pss_mgf1(priv.get(), &len, sig.data(), sig.size(), kDigest,
++  EXPECT_TRUE(RSA_sign_pss_mgf1(priv.get(), &len, sig.data(), sig.size(), kDigest,
+                                  sizeof(kDigest), EVP_sha256(), EVP_sha256(),
+                                  /*salt_len=*/32));
+ 
+@@ -1464,11 +1465,13 @@ TEST(RSATest, KeyLimits) {
+   //
+   // TODO(crbug.com/42290480): Raise the lower bound. 512-bit RSA was factored
+   // in 1999.
++  //
++  // WireMason: as in OpenSSL, only generated keys have that lower bound.
+   EXPECT_FALSE(generate_key(511u));
+   EXPECT_TRUE(
+       ErrorEquals(ERR_get_error(), ERR_LIB_RSA, RSA_R_KEY_SIZE_TOO_SMALL));
+-  EXPECT_FALSE(read_private_key("crypto/rsa/test/rsa511.pem"));
+-  EXPECT_FALSE(read_public_key("crypto/rsa/test/rsa511pub.pem"));
++  EXPECT_TRUE(read_private_key("crypto/rsa/test/rsa511.pem"));
++  EXPECT_TRUE(read_public_key("crypto/rsa/test/rsa511pub.pem"));
+ 
+   UniquePtr<RSA> rsa = read_private_key("crypto/rsa/test/rsa512.pem");
+   ASSERT_TRUE(rsa);

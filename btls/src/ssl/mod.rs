@@ -3531,6 +3531,36 @@ impl SslRef {
         }
     }
 
+    /// Like [`SslContextBuilder::set_private_key_method`], for this connection only: its
+    /// context, and the other connections sharing it, keep their private key or method.
+    #[corresponds(SSL_set_private_key_method)]
+    pub fn set_private_key_method<M>(&mut self, method: M)
+    where
+        M: PrivateKeyMethod,
+    {
+        unsafe {
+            // In an Arc, as the method is called with this connection borrowed mutably.
+            self.replace_ex_data(Ssl::cached_ex_index::<Arc<M>>(), Arc::new(method));
+
+            ffi::SSL_set_private_key_method(
+                self.as_ptr(),
+                &ffi::SSL_PRIVATE_KEY_METHOD {
+                    sign: Some(callbacks::raw_sign::<M>),
+                    decrypt: Some(callbacks::raw_decrypt::<M>),
+                    complete: Some(callbacks::raw_complete::<M>),
+                },
+            );
+        }
+    }
+
+    /// Sends a warning-level close_notify alert, even in the middle of a handshake, where
+    /// [`SslStream::shutdown`] sends none. No other alert is sent after it, so a handshake
+    /// callback that sends it and then fails the handshake sends no fatal alert.
+    #[corresponds(SSL_send_close_notify)]
+    pub fn send_close_notify(&mut self) -> Result<(), ErrorStack> {
+        unsafe { cvt(ffi::SSL_send_close_notify(self.as_ptr())) }
+    }
+
     /// Like [`SslContextBuilder::set_tmp_dh`].
     ///
     /// [`SslContextBuilder::set_tmp_dh`]: struct.SslContextBuilder.html#method.set_tmp_dh

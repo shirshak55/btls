@@ -1180,6 +1180,49 @@ fn test_info_callback() {
 }
 
 #[test]
+fn test_send_close_notify_in_handshake_callback() {
+    unsafe extern "C" fn cert_cb(ssl: *mut crate::ffi::SSL, _: *mut libc::c_void) -> libc::c_int {
+        let ssl = unsafe { ssl::SslRef::from_ptr_mut(ssl) };
+        ssl.send_close_notify().unwrap();
+        0
+    }
+
+    for version in [SslVersion::TLS1_2, SslVersion::TLS1_3] {
+        let alerts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let alerts_clone = alerts.clone();
+
+        let mut server = Server::builder();
+        server.ctx().set_verify(SslVerifyMode::PEER);
+        server.ctx().set_info_callback(move |_, mode, value| {
+            if mode == ssl::SslInfoCallbackMode::READ_ALERT {
+                alerts_clone.lock().unwrap().push(value);
+            }
+        });
+        server.should_error();
+        let server = server.build();
+
+        let mut client = server.client_with_root_ca();
+        client.ctx().set_max_proto_version(Some(version)).unwrap();
+        unsafe {
+            crate::ffi::SSL_CTX_set_cert_cb(
+                client.ctx().as_ptr(),
+                Some(cert_cb),
+                std::ptr::null_mut(),
+            );
+        }
+        client.connect_err();
+        drop(server);
+
+        let alerts = alerts.lock().unwrap();
+        let [ssl::SslInfoCallbackValue::Alert(alert)] = alerts[..] else {
+            panic!("{version:?}: received {alerts:?}, not one alert");
+        };
+        assert_eq!(alert.alert_level(), ssl::Ssl3AlertLevel::WARNING);
+        assert_eq!(alert.alert(), ssl::SslAlert::CLOSE_NOTIFY);
+    }
+}
+
+#[test]
 fn test_ssl_set_compliance() {
     let ctx = SslContext::builder(SslMethod::tls()).unwrap().build();
     let mut ssl = Ssl::new(&ctx).unwrap();

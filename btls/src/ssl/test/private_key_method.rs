@@ -264,6 +264,42 @@ fn test_sign_retry_complete_ok() {
     client.connect();
 }
 
+#[test]
+fn test_ssl_sign_retry() {
+    let called_sign = Arc::new(AtomicBool::new(false));
+    let called_sign_clone = called_sign.clone();
+
+    let mut builder = Server::builder();
+
+    builder.ssl_cb(move |ssl| {
+        let called_sign = called_sign_clone.clone();
+
+        ssl.set_private_key_method(Method::new().sign(move |_, _, _, _| {
+            called_sign.store(true, Ordering::SeqCst);
+
+            Err(PrivateKeyMethodError::RETRY)
+        }));
+    });
+
+    builder.err_cb(|error| {
+        let HandshakeError::WouldBlock(mid_handshake) = error else {
+            panic!("should be WouldBlock");
+        };
+
+        assert_eq!(
+            mid_handshake.error().code(),
+            ErrorCode::WANT_PRIVATE_KEY_OPERATION
+        );
+    });
+
+    let server = builder.build();
+    let client = server.client_with_root_ca();
+
+    client.connect_err();
+
+    assert!(called_sign.load(Ordering::SeqCst));
+}
+
 fn sign_with_default_config(input: &[u8], output: &mut [u8]) -> usize {
     let pkey = PKey::private_key_from_pem(KEY).unwrap();
     let mut signer = Signer::new(MessageDigest::sha256(), &pkey).unwrap();
