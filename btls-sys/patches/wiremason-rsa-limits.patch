@@ -83,8 +83,26 @@ index ba08ae7..74bcfa8 100644
    if (impl->e != nullptr) {
      BIGNUM *vrfy = BN_CTX_get(ctx.get());
      if (vrfy == nullptr ||
+diff --git a/crypto/rsa/rsa_asn1.cc b/crypto/rsa/rsa_asn1.cc
+index 3869de6..487ed4f 100644
+--- a/crypto/rsa/rsa_asn1.cc
++++ b/crypto/rsa/rsa_asn1.cc
+@@ -68,7 +68,12 @@ RSA *RSA_parse_public_key(CBS *cbs) {
+     return nullptr;
+   }
+ 
+-  if (!RSA_check_key(ret)) {
++  // WireMason: a public key over |OPENSSL_RSA_MAX_MODULUS_BITS| parses, as in
++  // OpenSSL, so a certificate carrying one does; every operation with it still
++  // fails (|RSA_R_MODULUS_TOO_LARGE|), as OpenSSL's do, a peer's signature
++  // failing to verify rather than its certificate to parse.
++  if (BN_num_bits(ret->n.get()) <= OPENSSL_RSA_MAX_MODULUS_BITS &&
++      !RSA_check_key(ret)) {
+     OPENSSL_PUT_ERROR(RSA, RSA_R_BAD_RSA_PARAMETERS);
+     RSA_free(ret);
+     return nullptr;
 diff --git a/crypto/rsa/rsa_test.cc b/crypto/rsa/rsa_test.cc
-index a7052b3..4bcc0d8 100644
+index a7052b3..1a67b82 100644
 --- a/crypto/rsa/rsa_test.cc
 +++ b/crypto/rsa/rsa_test.cc
 @@ -1375,15 +1375,16 @@ TEST(RSATest, LargeE) {
@@ -134,3 +152,24 @@ index a7052b3..4bcc0d8 100644
  
    UniquePtr<RSA> rsa = read_private_key("crypto/rsa/test/rsa512.pem");
    ASSERT_TRUE(rsa);
+@@ -1503,8 +1506,19 @@ TEST(RSATest, KeyLimits) {
+   EXPECT_EQ(RSA_bits(rsa.get()), 16384u);
+ 
+   EXPECT_FALSE(read_private_key("crypto/rsa/test/rsa16385.pem"));
+-  EXPECT_FALSE(read_public_key("crypto/rsa/test/rsa16385pub.pem"));
+   EXPECT_FALSE(generate_key(16385u));
++
++  // WireMason: as in OpenSSL, a public key over that parses, and every
++  // operation with it fails.
++  rsa = read_public_key("crypto/rsa/test/rsa16385pub.pem");
++  ASSERT_TRUE(rsa);
++  EXPECT_EQ(RSA_bits(rsa.get()), 16385u);
++  std::vector<uint8_t> sig(RSA_size(rsa.get()));
++  static const uint8_t kDigest[32] = {0};
++  EXPECT_FALSE(RSA_verify(NID_sha256, kDigest, sizeof(kDigest), sig.data(),
++                          sig.size(), rsa.get()));
++  EXPECT_TRUE(
++      ErrorEquals(ERR_get_error(), ERR_LIB_RSA, RSA_R_MODULUS_TOO_LARGE));
+ }
+ 
+ #if defined(OPENSSL_THREADS)

@@ -139,6 +139,36 @@ impl<S: AsyncRead + AsyncWrite> SslStream<S> {
         future::poll_fn(|cx| self.as_mut().poll_accept(cx)).await
     }
 
+    /// Like [`SslStream::send_fatal_alert`](ssl::SslStream::send_fatal_alert).
+    pub fn poll_send_fatal_alert(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        description: u8,
+    ) -> Poll<Result<(), ssl::Error>> {
+        self.with_context(cx, |s| cvt_ossl(s.send_fatal_alert(description)))
+    }
+
+    /// A convenience method wrapping [`poll_send_fatal_alert`](Self::poll_send_fatal_alert).
+    pub async fn send_fatal_alert(
+        mut self: Pin<&mut Self>,
+        description: u8,
+    ) -> Result<(), ssl::Error> {
+        future::poll_fn(|cx| self.as_mut().poll_send_fatal_alert(cx, description)).await
+    }
+
+    /// Like [`SslStream::send_close_notify`](ssl::SslStream::send_close_notify).
+    pub fn poll_send_close_notify(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), ssl::Error>> {
+        self.with_context(cx, |s| cvt_ossl(s.send_close_notify()))
+    }
+
+    /// A convenience method wrapping [`poll_send_close_notify`](Self::poll_send_close_notify).
+    pub async fn send_close_notify(mut self: Pin<&mut Self>) -> Result<(), ssl::Error> {
+        future::poll_fn(|cx| self.as_mut().poll_send_close_notify(cx)).await
+    }
+
     #[inline]
     /// Like [`SslStream::do_handshake`](ssl::SslStream::do_handshake).
     pub fn poll_do_handshake(

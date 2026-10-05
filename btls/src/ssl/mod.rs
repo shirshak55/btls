@@ -3503,11 +3503,13 @@ impl SslRef {
         }
     }
 
-    /// Verifies, as a client in a TLS 1.2 handshake, the server's certificate once the
-    /// server's whole flight is read, through its ServerHelloDone, rather than right after its
-    /// Certificate, so a custom verify callback (see [`Self::set_custom_verify_callback`])
-    /// pausing the handshake finds its ServerKeyExchange and CertificateRequest read. The
-    /// client sends nothing before then either way.
+    /// Verifies, as a client, the server's certificate once the server's whole flight is
+    /// read, through its ServerHelloDone (TLS 1.2) or Finished (TLS 1.3), rather than right
+    /// after its Certificate, so a custom verify callback (see
+    /// [`Self::set_custom_verify_callback`]) pausing the handshake finds its
+    /// ServerKeyExchange and CertificateRequest read, and the handshake paused where every
+    /// other pause after the server's flight is (see [`Self::peek_server_alert`]). The client
+    /// sends nothing before then either way.
     #[corresponds(SSL_set_verify_after_server_flight)]
     pub fn set_verify_after_server_flight(&mut self, enabled: bool) -> Result<(), ErrorStack> {
         unsafe {
@@ -3550,6 +3552,31 @@ impl SslRef {
                     complete: Some(callbacks::raw_complete::<M>),
                 },
             );
+        }
+    }
+
+    /// Looks through `records`, what the server sent this client since its handshake paused
+    /// after the server's whole flight (see [`Self::set_verify_after_server_flight`]), read
+    /// from the transport and not yet given to it, for the alert the server ended the
+    /// handshake with meanwhile, leaving the connection as it is: TLS 1.3 records are opened
+    /// with the server's application traffic keys, handshake messages before the alert (a
+    /// NewSessionTicket) skipped.
+    #[corresponds(SSL_peek_server_alert)]
+    #[must_use]
+    pub fn peek_server_alert(&self, records: &[u8]) -> PeekedAlert {
+        let (mut level, mut description) = (0, 0);
+        match unsafe {
+            ffi::SSL_peek_server_alert(
+                self.as_ptr(),
+                records.as_ptr(),
+                records.len(),
+                &mut level,
+                &mut description,
+            )
+        } {
+            1 => PeekedAlert::Alert { level, description },
+            0 => PeekedAlert::Incomplete,
+            _ => PeekedAlert::Unknown,
         }
     }
 
@@ -4688,6 +4715,26 @@ impl<S: Read + Write> SslStream<S> {
         }
     }
 
+    /// Sends the fatal alert `description`, even in the middle of a handshake; no other
+    /// alert is sent after it. Retried after `WANT_WRITE`, it sends the same alert.
+    #[corresponds(SSL_send_fatal_alert)]
+    pub fn send_fatal_alert(&mut self, description: u8) -> Result<(), Error> {
+        match unsafe { ffi::SSL_send_fatal_alert(self.ssl.as_ptr(), description) } {
+            n if n > 0 => Ok(()),
+            n => Err(self.make_error(n)),
+        }
+    }
+
+    /// Sends a warning-level close_notify alert, even in the middle of a handshake (see
+    /// [`SslRef::send_close_notify`]).
+    #[corresponds(SSL_send_close_notify)]
+    pub fn send_close_notify(&mut self) -> Result<(), Error> {
+        match unsafe { ffi::SSL_send_close_notify(self.ssl.as_ptr()) } {
+            n if n > 0 => Ok(()),
+            n => Err(self.make_error(n)),
+        }
+    }
+
     /// Returns the session's shutdown state.
     #[corresponds(SSL_get_shutdown)]
     pub fn get_shutdown(&mut self) -> ShutdownState {
@@ -5000,6 +5047,20 @@ impl<S> SslStreamBuilder<S> {
             bio::set_dtls_mtu_size::<S>(bio, mtu_size);
         }
     }
+}
+
+/// What [`SslRef::peek_server_alert`] found.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PeekedAlert {
+    /// The server's alert: its level and description.
+    Alert { level: u8, description: u8 },
+
+    /// No record past the server's handshake messages is whole yet.
+    Incomplete,
+
+    /// Something other than an alert (application data), a record that couldn't be opened,
+    /// or a connection not so paused: none of the server's alerts can be told.
+    Unknown,
 }
 
 /// The result of a shutdown request.
