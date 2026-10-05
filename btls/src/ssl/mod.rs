@@ -3560,16 +3560,19 @@ impl SslRef {
     /// from the transport and not yet given to it, for the alert the server ended the
     /// handshake with meanwhile, leaving the connection as it is: TLS 1.3 records are opened
     /// with the server's application traffic keys, handshake messages before the alert (a
-    /// NewSessionTicket) skipped.
+    /// NewSessionTicket) skipped. Each record is looked through once: `scan` tells how far
+    /// earlier calls on the same `records`, read ahead since, did, and is moved on.
     #[corresponds(SSL_peek_server_alert)]
     #[must_use]
-    pub fn peek_server_alert(&self, records: &[u8]) -> PeekedAlert {
+    pub fn peek_server_alert(&self, records: &[u8], scan: &mut AlertScan) -> PeekedAlert {
         let (mut level, mut description) = (0, 0);
         match unsafe {
             ffi::SSL_peek_server_alert(
                 self.as_ptr(),
                 records.as_ptr(),
                 records.len(),
+                &mut scan.scanned,
+                &mut scan.records,
                 &mut level,
                 &mut description,
             )
@@ -5047,6 +5050,14 @@ impl<S> SslStreamBuilder<S> {
             bio::set_dtls_mtu_size::<S>(bio, mtu_size);
         }
     }
+}
+
+/// How far [`SslRef::peek_server_alert`] looked through what a server sent: the bytes and
+/// records it found no alert in.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct AlertScan {
+    scanned: usize,
+    records: u64,
 }
 
 /// What [`SslRef::peek_server_alert`] found.
