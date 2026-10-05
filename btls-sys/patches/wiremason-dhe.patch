@@ -1,16 +1,3 @@
-diff --git a/include/openssl/dh.h b/include/openssl/dh.h
-index acba59f..a1c8de0 100644
---- a/include/openssl/dh.h
-+++ b/include/openssl/dh.h
-@@ -54,7 +54,7 @@ OPENSSL_EXPORT int DH_up_ref(DH *dh);
- 
- // OPENSSL_DH_MAX_MODULUS_BITS is the maximum supported Diffie-Hellman group
- // modulus, in bits.
--#define OPENSSL_DH_MAX_MODULUS_BITS 8192
-+#define OPENSSL_DH_MAX_MODULUS_BITS 10000
- 
- // DH_bits returns the size of |dh|'s group modulus, in bits.
- OPENSSL_EXPORT unsigned DH_bits(const DH *dh);
 diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
 index e062bf6..d5a1901 100644
 --- a/include/openssl/ssl.h
@@ -291,7 +278,7 @@ index ad43e77..06217f7 100644
    if (CBS_len(&session) != 0) {
      OPENSSL_PUT_ERROR(SSL, SSL_R_INVALID_SSL_SESSION);
 diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
-index 8d978e5..91fc13a 100644
+index 8d978e5..475654c 100644
 --- a/ssl/ssl_lib.cc
 +++ b/ssl/ssl_lib.cc
 @@ -31,6 +31,7 @@
@@ -315,7 +302,7 @@ index 8d978e5..91fc13a 100644
    ssl->config->psk_client_callback = ctx->psk_client_callback;
    ssl->config->psk_server_callback = ctx->psk_server_callback;
  
-@@ -2108,9 +2115,185 @@ int SSL_set1_server_supported_groups_hint(SSL *ssl,
+@@ -2108,9 +2115,190 @@ int SSL_set1_server_supported_groups_hint(SSL *ssl,
    return ssl->config->server_supported_groups_hint.CopyFrom(span);
  }
  
@@ -343,27 +330,29 @@ index 8d978e5..91fc13a 100644
 +  ssl->config->min_dhe_bits = bits;
 +  return 1;
 +}
- 
--int SSL_set_tmp_dh(SSL *ssl, const DH *dh) { return 1; }
++
 +uint16_t SSL_SESSION_get_dhe_bits(const SSL_SESSION *session) {
 +  return session->dhe_bits;
 +}
 +
-+// is_safe_prime returns whether |p| is a safe prime, 2q + 1 for a prime q: q
-+// passes the Miller-Rabin rounds of a random candidate, and then p is prime by
-+// Pocklington's criterion with base 2, 2^(p - 1) = 1 (mod p) and 3 not
-+// dividing p. An origin's group, for which this is asked, is chosen by the
-+// peer that ends the connection anyway, so a composite crafted to pass would
-+// weaken only what it already reads.
++// is_safe_prime returns whether |p| is a safe prime, 2q + 1 for a prime q, by
++// two variable-time exponentiations, as an origin's group is public: q passes
++// the Fermat test to base 2, and then p is prime by Pocklington's criterion
++// with base 2, 2^(p - 1) = 1 (mod p) and 3 not dividing p. So a prime an origin
++// makes up for each connection, safe or not, costs no more than the key
++// exchange whose exponents it would shorten. An origin's group, for which this
++// is asked, is chosen by the peer that ends the connection anyway, so a
++// composite crafted to pass would weaken only what it already reads.
 +static bool is_safe_prime(const BIGNUM *p) {
 +  UniquePtr<BN_CTX> ctx(BN_CTX_new());
 +  UniquePtr<BIGNUM> q(BN_new()), exponent(BN_new()), r(BN_new());
-+  int q_prime = 0;
 +  return ctx != nullptr && q != nullptr && exponent != nullptr &&
-+         r != nullptr && BN_is_odd(p) && BN_rshift1(q.get(), p) &&
-+         BN_primality_test(&q_prime, q.get(), BN_prime_checks_for_generation,
-+                           ctx.get(), /*do_trial_division=*/1, nullptr) &&
-+         q_prime && BN_mod_word(p, 3) != 0 && BN_copy(exponent.get(), p) &&
++         r != nullptr && BN_is_odd(p) && BN_mod_word(p, 3) != 0 &&
++         BN_rshift1(q.get(), p) && BN_is_odd(q.get()) &&
++         BN_sub(exponent.get(), q.get(), BN_value_one()) &&
++         BN_mod_exp_mont_word(r.get(), 2, exponent.get(), q.get(), ctx.get(),
++                              nullptr) &&
++         BN_is_one(r.get()) && BN_copy(exponent.get(), p) &&
 +         BN_sub_word(exponent.get(), 1) &&
 +         BN_mod_exp_mont_word(r.get(), 2, exponent.get(), p, ctx.get(),
 +                              nullptr) &&
@@ -457,16 +446,28 @@ index 8d978e5..91fc13a 100644
 +      }
 +    }
 +  }
-+
+ 
+-int SSL_set_tmp_dh(SSL *ssl, const DH *dh) { return 1; }
 +  // Any other group's keys are short only once its prime is known to be safe,
 +  // as only then has p - 1 no small factors through which a short exponent
 +  // leaks (van Oorschot and Wiener): as long as a named group's of its size
-+  // has, and beyond 8192 bits twice the 256-bit security of a 15360-bit group.
++  // has. A group over 8192 bits, which |DH_generate_key| refuses, isn't checked.
 +  static const struct {
 +    unsigned prime_bits;
 +    unsigned private_bits;
 +  } kLengths[] = {{2048, 225}, {3072, 275}, {4096, 325}, {6144, 375},
 +                  {8192, 400}};
++  const unsigned bits = BN_num_bits(p);
++  unsigned private_bits = 0;
++  for (const auto &length : kLengths) {
++    if (bits <= length.prime_bits) {
++      private_bits = length.private_bits;
++      break;
++    }
++  }
++  if (private_bits == 0) {
++    return 0;
++  }
 +  int safe = -1;
 +  {
 +    MutexReadLock lock(&g_safe_primes_lock);
@@ -489,16 +490,7 @@ index 8d978e5..91fc13a 100644
 +      g_safe_primes_len++;
 +    }
 +  }
-+  if (!safe) {
-+    return 0;
-+  }
-+  const unsigned bits = BN_num_bits(p);
-+  for (const auto &length : kLengths) {
-+    if (bits <= length.prime_bits) {
-+      return length.private_bits;
-+    }
-+  }
-+  return 512;
++  return safe ? private_bits : 0;
 +}
  
  STACK_OF(SSL_CIPHER) *SSL_CTX_get_ciphers(const SSL_CTX *ctx) {

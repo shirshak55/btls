@@ -3503,6 +3503,34 @@ impl SslRef {
         }
     }
 
+    /// Verifies, as a client in a TLS 1.2 handshake, the server's certificate once the
+    /// server's whole flight is read, through its ServerHelloDone, rather than right after its
+    /// Certificate, so a custom verify callback (see [`Self::set_custom_verify_callback`])
+    /// pausing the handshake finds its ServerKeyExchange and CertificateRequest read. The
+    /// client sends nothing before then either way.
+    #[corresponds(SSL_set_verify_after_server_flight)]
+    pub fn set_verify_after_server_flight(&mut self, enabled: bool) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_set_verify_after_server_flight(
+                self.as_ptr(),
+                c_int::from(enabled),
+            ))
+        }
+    }
+
+    /// Like [`SslContextBuilder::set_session_id_context`], for this connection: as a server,
+    /// it resumes only sessions issued under the same context, and issues its own under it.
+    #[corresponds(SSL_set_session_id_context)]
+    pub fn set_session_id_context(&mut self, sid_ctx: &[u8]) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::SSL_set_session_id_context(
+                self.as_ptr(),
+                sid_ctx.as_ptr(),
+                sid_ctx.len(),
+            ))
+        }
+    }
+
     /// Like [`SslContextBuilder::set_tmp_dh`].
     ///
     /// [`SslContextBuilder::set_tmp_dh`]: struct.SslContextBuilder.html#method.set_tmp_dh

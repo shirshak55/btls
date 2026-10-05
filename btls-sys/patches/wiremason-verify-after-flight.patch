@@ -1,0 +1,108 @@
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index 2eff701..c70b77c 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -2923,6 +2923,16 @@ OPENSSL_EXPORT int SSL_set1_certificate_request(SSL *ssl, uint16_t version,
+                                                 const uint8_t *body,
+                                                 size_t body_len);
+ 
++// SSL_set_verify_after_server_flight configures |ssl|, a client, to verify the
++// server's certificate in a TLS 1.2 handshake once it has read the server's
++// whole flight, through its ServerHelloDone, rather than right after its
++// Certificate, so that a custom verify callback (see |SSL_set_custom_verify|)
++// pausing the handshake (|ssl_verify_retry|) finds its ServerKeyExchange and
++// CertificateRequest read, as TLS 1.3 reads its CertificateRequest first. The
++// client sends nothing before then either way. It returns one on success and
++// zero if |ssl|'s configuration was shed.
++OPENSSL_EXPORT int SSL_set_verify_after_server_flight(SSL *ssl, int enabled);
++
+ // SSL_CTX_get_verify_mode returns |ctx|'s verify mode, set by
+ // |SSL_CTX_set_verify|.
+ OPENSSL_EXPORT int SSL_CTX_get_verify_mode(const SSL_CTX *ctx);
+diff --git a/ssl/handshake_client.cc b/ssl/handshake_client.cc
+index 4734d4f..dbaa5c1 100644
+--- a/ssl/handshake_client.cc
++++ b/ssl/handshake_client.cc
+@@ -1020,6 +1020,15 @@ static enum ssl_hs_wait_t do_verify_server_certificate(SSL_HANDSHAKE *hs) {
+     return ssl_hs_ok;
+   }
+ 
++  // Verification after the server's flight (see
++  // |SSL_set_verify_after_server_flight|) comes back here from its
++  // ServerHelloDone.
++  if (hs->config->verify_after_server_flight && !hs->verify_deferred) {
++    hs->verify_deferred = true;
++    hs->state = state_read_server_key_exchange;
++    return ssl_hs_ok;
++  }
++
+   switch (ssl_verify_peer_cert(hs)) {
+     case ssl_verify_ok:
+       break;
+@@ -1030,7 +1039,8 @@ static enum ssl_hs_wait_t do_verify_server_certificate(SSL_HANDSHAKE *hs) {
+       return ssl_hs_certificate_verify;
+   }
+ 
+-  hs->state = state_read_server_key_exchange;
++  hs->state = hs->verify_deferred ? state_send_client_certificate
++                                  : state_read_server_key_exchange;
+   return ssl_hs_ok;
+ }
+ 
+@@ -1364,7 +1374,8 @@ static enum ssl_hs_wait_t do_read_server_hello_done(SSL_HANDSHAKE *hs) {
+   }
+ 
+   ssl->method->next_message(ssl);
+-  hs->state = state_send_client_certificate;
++  hs->state = hs->verify_deferred ? state_verify_server_certificate
++                                  : state_send_client_certificate;
+   return ssl_hs_ok;
+ }
+ 
+diff --git a/ssl/internal.h b/ssl/internal.h
+index 842bf19..3e8c97a 100644
+--- a/ssl/internal.h
++++ b/ssl/internal.h
+@@ -1939,6 +1939,11 @@ struct SSL_HANDSHAKE {
+   // ServerKeyExchange.
+   Array<uint8_t> dh_p, dh_g;
+ 
++  // verify_deferred, on TLS 1.2 clients, is whether the server's certificate is
++  // verified after its ServerHelloDone (see
++  // |SSL_set_verify_after_server_flight|).
++  bool verify_deferred = false;
++
+   // dhe_key, on servers, is the Diffie-Hellman key of a TLS 1.2 DHE
+   // ServerKeyExchange.
+   UniquePtr<DH> dhe_key;
+@@ -3505,6 +3510,11 @@ struct SSL_CONFIG {
+   // TLS 1.2 DHE ServerKeyExchange may name (see |SSL_set_min_dhe_bits|).
+   uint16_t min_dhe_bits = 2048;
+ 
++  // Client-only: verify_after_server_flight is whether a TLS 1.2 handshake
++  // verifies the server's certificate once it read the server's whole flight
++  // (see |SSL_set_verify_after_server_flight|).
++  bool verify_after_server_flight = false;
++
+   unsigned (*psk_client_callback)(SSL *ssl, const char *hint, char *identity,
+                                   unsigned max_identity_len, uint8_t *psk,
+                                   unsigned max_psk_len) = nullptr;
+diff --git a/ssl/ssl_lib.cc b/ssl/ssl_lib.cc
+index 4018132..562b6b0 100644
+--- a/ssl/ssl_lib.cc
++++ b/ssl/ssl_lib.cc
+@@ -2426,6 +2426,14 @@ int SSL_set1_certificate_request(SSL *ssl, uint16_t version,
+   return 1;
+ }
+ 
++int SSL_set_verify_after_server_flight(SSL *ssl, int enabled) {
++  if (!ssl->config) {
++    return 0;
++  }
++  ssl->config->verify_after_server_flight = !!enabled;
++  return 1;
++}
++
+ void SSL_CTX_enable_signed_cert_timestamps(SSL_CTX *ctx) {
+   ctx->signed_cert_timestamps_enabled = true;
+ }

@@ -505,6 +505,9 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
     println!("cargo:warning=applying WireMason mirrored CertificateRequest to BoringSSL");
     apply_patch(config, "wiremason-client-auth.patch")?;
 
+    println!("cargo:warning=applying WireMason TLS 1.2 verification after the server flight to BoringSSL");
+    apply_patch(config, "wiremason-verify-after-flight.patch")?;
+
     Ok(())
 }
 
