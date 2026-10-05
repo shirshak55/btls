@@ -3673,6 +3673,108 @@ index b48becd..2007759 100644
 +  return parse_sigalgs_list(&parsed, sigalgs) &&
 +         set_sigalg_prefs(&ctx->delegated_credentials, parsed);
 +}
+diff --git a/ssl/ssl_test.cc b/ssl/ssl_test.cc
+index a91a626..5e34df1 100644
+--- a/ssl/ssl_test.cc
++++ b/ssl/ssl_test.cc
+@@ -410,6 +410,9 @@ static const CipherTest kCipherTests[] = {
+         "3DES",
+         {
+             {SSL_CIPHER_RSA_WITH_3DES_EDE_CBC_SHA, 0},
++            {SSL_CIPHER_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA, 0},
++            {SSL_CIPHER_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, 0},
++            {SSL_CIPHER_DHE_RSA_WITH_3DES_EDE_CBC_SHA, 0},
+         },
+         false,
+     },
+@@ -422,14 +425,14 @@ static const CipherTest kCipherTests[] = {
+         },
+         false,
+     },
+-    // The cipher must still match all combined selectors, however. "ECDHE+3DES"
+-    // matches nothing because we do not implement
+-    // TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA. (The test includes
+-    // TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 so the final list is not empty.)
++    // The cipher must still match all combined selectors, however: "ECDHE+3DES"
++    // matches only the ECDHE 3DES suites.
+     {
+         "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:ECDHE+3DES",
+         {
+             {SSL_CIPHER_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 0},
++            {SSL_CIPHER_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA, 0},
++            {SSL_CIPHER_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, 0},
+         },
+         false,
+     },
+@@ -451,6 +454,9 @@ static const CipherTest kCipherTests[] = {
+             {SSL_CIPHER_RSA_WITH_AES_128_GCM_SHA256, 0},
+             {SSL_CIPHER_RSA_WITH_AES_128_CBC_SHA, 0},
+             {SSL_CIPHER_RSA_WITH_3DES_EDE_CBC_SHA, 0},
++            {SSL_CIPHER_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA, 0},
++            {SSL_CIPHER_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, 0},
++            {SSL_CIPHER_DHE_RSA_WITH_3DES_EDE_CBC_SHA, 0},
+         },
+         false,
+     },
+@@ -787,10 +793,11 @@ TEST(SSLTest, SetClientKeyShares) {
+           true,
+       },
+       {
++          // Any order, as a mirrored ClientHello's.
+           "Multiple key shares, out of order",
+           {SSL_GROUP_X25519, SSL_GROUP_SECP256R1, SSL_GROUP_X25519_MLKEM768},
+           {SSL_GROUP_X25519_MLKEM768, SSL_GROUP_X25519},
+-          false,
++          true,
+       },
+       {
+           "More than two key shares",
+@@ -6940,7 +6947,10 @@ TEST(SSLTest, SigAlgs) {
+       {{1}, false, {}},
+       {{1, 2, 3}, false, {}},
+       {{NID_sha256, EVP_PKEY_ED25519}, false, {}},
+-      {{NID_sha256, EVP_PKEY_RSA, NID_sha256, EVP_PKEY_RSA}, false, {}},
++      // Repeated algorithms are kept, as some clients send them.
++      {{NID_sha256, EVP_PKEY_RSA, NID_sha256, EVP_PKEY_RSA},
++       true,
++       {SSL_SIGN_RSA_PKCS1_SHA256, SSL_SIGN_RSA_PKCS1_SHA256}},
+       {{NID_sha256, EVP_PKEY_ML_DSA_44}, false, {}},
+ 
+       {{NID_sha256, EVP_PKEY_RSA}, true, {SSL_SIGN_RSA_PKCS1_SHA256}},
+@@ -6994,8 +7004,14 @@ TEST(SSLTest, SigAlgsList) {
+       {":RSA+SHA256+:", false, {}},
+       {"!", false, {}},
+       {"\x01", false, {}},
+-      {"RSA+SHA256:RSA+SHA384:RSA+SHA256", false, {}},
+-      {"RSA-PSS+SHA256:rsa_pss_rsae_sha256", false, {}},
++      // Repeated algorithms are kept, as some clients send them.
++      {"RSA+SHA256:RSA+SHA384:RSA+SHA256",
++       true,
++       {SSL_SIGN_RSA_PKCS1_SHA256, SSL_SIGN_RSA_PKCS1_SHA384,
++        SSL_SIGN_RSA_PKCS1_SHA256}},
++      {"RSA-PSS+SHA256:rsa_pss_rsae_sha256",
++       true,
++       {SSL_SIGN_RSA_PSS_RSAE_SHA256, SSL_SIGN_RSA_PSS_RSAE_SHA256}},
+ 
+       {"RSA+SHA256", true, {SSL_SIGN_RSA_PKCS1_SHA256}},
+       {"RSA+SHA256:ed25519",
+@@ -10700,12 +10716,13 @@ TEST(SSLTest, InvalidSignatureAlgorithm) {
+   EXPECT_FALSE(SSL_CTX_set_verify_algorithm_prefs(ctx.get(), kInvalidPrefs,
+                                                   std::size(kInvalidPrefs)));
+ 
++  // Repeated algorithms are kept, as some clients send them.
+   static const uint16_t kDuplicatePrefs[] = {SSL_SIGN_RSA_PKCS1_SHA256,
+                                              SSL_SIGN_RSA_PKCS1_SHA256};
+-  EXPECT_FALSE(SSL_CTX_set_signing_algorithm_prefs(ctx.get(), kDuplicatePrefs,
+-                                                   std::size(kDuplicatePrefs)));
+-  EXPECT_FALSE(SSL_CTX_set_verify_algorithm_prefs(ctx.get(), kDuplicatePrefs,
++  EXPECT_TRUE(SSL_CTX_set_signing_algorithm_prefs(ctx.get(), kDuplicatePrefs,
+                                                   std::size(kDuplicatePrefs)));
++  EXPECT_TRUE(SSL_CTX_set_verify_algorithm_prefs(ctx.get(), kDuplicatePrefs,
++                                                 std::size(kDuplicatePrefs)));
+ }
+ 
+ TEST(SSLTest, InvalidGroups) {
 diff --git a/ssl/ssl_transcript.cc b/ssl/ssl_transcript.cc
 index 101da70..101ebc9 100644
 --- a/ssl/ssl_transcript.cc

@@ -92,3 +92,35 @@ index 4aa2123..fc806e0 100644
      return 0;
    }
  
+diff --git a/crypto/x509/x509_test.cc b/crypto/x509/x509_test.cc
+--- a/crypto/x509/x509_test.cc
++++ b/crypto/x509/x509_test.cc
+@@ -2539,6 +2539,13 @@
+       // Although invalid, we tolerate an explicit trailerField value. See the
+       // certificates in cl/362617931.
+       "crypto/x509/test/pss_sha256_explicit_trailer.pem",
++      // WireMason verifies the parameters OpenSSL verifies: any digest but
++      // MD4/MD5, MGF-1 with any digest and any salt length.
++      "crypto/x509/test/pss_sha1_explicit.pem",
++      "crypto/x509/test/pss_sha1.pem",
++      "crypto/x509/test/pss_sha224.pem",
++      "crypto/x509/test/pss_sha256_mgf1_sha384.pem",
++      "crypto/x509/test/pss_sha256_salt31.pem",
+   };
+   for (const char *path : kGoodCerts) {
+     SCOPED_TRACE(path);
+@@ -2550,14 +2557,9 @@
+   }
+ 
+   static const char *kBadCerts[] = {
+-      "crypto/x509/test/pss_sha1_explicit.pem",
+       "crypto/x509/test/pss_sha1_mgf1_syntax_error.pem",
+-      "crypto/x509/test/pss_sha1.pem",
+-      "crypto/x509/test/pss_sha224.pem",
+-      "crypto/x509/test/pss_sha256_mgf1_sha384.pem",
+       "crypto/x509/test/pss_sha256_mgf1_syntax_error.pem",
+       "crypto/x509/test/pss_sha256_salt_overflow.pem",
+-      "crypto/x509/test/pss_sha256_salt31.pem",
+       "crypto/x509/test/pss_sha256_unknown_mgf.pem",
+       "crypto/x509/test/pss_sha256_wrong_trailer.pem",
+   };

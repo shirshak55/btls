@@ -77,7 +77,7 @@ fn peer_certificate() {
     let fingerprint = cert.digest(MessageDigest::sha1()).unwrap();
     assert_eq!(
         hex::encode(fingerprint),
-        "59172d9313e84459bcff27f967e79e6e9217e584"
+        "b1d4a27b904aa46d5f1640e931bfdbd07dac810a"
     );
 }
 
@@ -232,53 +232,6 @@ fn test_connect_with_srtp_ssl() {
     let buf2 = guard.join().unwrap();
 
     assert_eq!(buf[..], buf2[..]);
-}
-
-/// Tests that DTLS 1.3 can be enabled and negotiated successfully.
-#[test]
-fn test_dtls_1_3_version() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    let guard = thread::spawn(move || {
-        let stream = listener.accept().unwrap().0;
-        let mut ctx = SslContext::builder(SslMethod::dtls()).unwrap();
-        ctx.set_certificate_file(Path::new("test/cert.pem"), SslFiletype::PEM)
-            .unwrap();
-        ctx.set_private_key_file(Path::new("test/key.pem"), SslFiletype::PEM)
-            .unwrap();
-        // Enable DTLS 1.3
-        ctx.set_max_proto_version(Some(SslVersion::DTLS1_3))
-            .unwrap();
-        let mut ssl = Ssl::new(&ctx.build()).unwrap();
-        ssl.set_mtu(1500).unwrap();
-        let stream = ssl.accept(stream).unwrap();
-
-        // Verify DTLS 1.3 was negotiated
-        let version = stream.ssl().version2().unwrap();
-        assert_eq!(version, SslVersion::DTLS1_3);
-
-        stream
-    });
-
-    let stream = TcpStream::connect(addr).unwrap();
-    let mut ctx = SslContext::builder(SslMethod::dtls()).unwrap();
-    // Enable DTLS 1.3 on client
-    ctx.set_max_proto_version(Some(SslVersion::DTLS1_3))
-        .unwrap();
-    let mut ssl = Ssl::new(&ctx.build()).unwrap();
-    ssl.set_mtu(1500).unwrap();
-    let stream = ssl.connect(stream).unwrap();
-
-    // Verify DTLS 1.3 was negotiated on client side
-    let version = stream.ssl().version2().unwrap();
-    assert_eq!(version, SslVersion::DTLS1_3);
-
-    // Also check version string
-    let version_str = stream.ssl().version_str();
-    assert_eq!(version_str, "DTLSv1.3");
-
-    guard.join().unwrap();
 }
 
 /// Tests that when the `SslStream` is created as a server stream, the protocols

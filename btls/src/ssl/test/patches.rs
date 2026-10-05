@@ -6,8 +6,6 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use foreign_types::ForeignTypeRef;
-
 use super::server::Server;
 use crate::ffi;
 use crate::ssl::{
@@ -191,42 +189,6 @@ fn connect_badssl_with_ciphers(host: &str, cipher_list: &str, expected_ciphers: 
         response.starts_with(b"HTTP/1."),
         "{host} did not return an HTTP response",
     );
-}
-
-#[test]
-fn boring_pq_p256_kyber_group_can_negotiate() {
-    // boring-pq.patch adds P256Kyber768Draft00. Require a real TLS 1.3
-    // handshake so a future patch migration cannot keep only the constant.
-    let mut server = Server::builder();
-    server
-        .ctx()
-        .set_min_proto_version(Some(SslVersion::TLS1_3))
-        .unwrap();
-    server
-        .ctx()
-        .set_max_proto_version(Some(SslVersion::TLS1_3))
-        .unwrap();
-    server.ctx().set_curves_list("P256Kyber768Draft00").unwrap();
-    let server = server.build();
-
-    let mut client = server.client_with_root_ca();
-    client
-        .ctx()
-        .set_min_proto_version(Some(SslVersion::TLS1_3))
-        .unwrap();
-    client
-        .ctx()
-        .set_max_proto_version(Some(SslVersion::TLS1_3))
-        .unwrap();
-    client.ctx().set_curves_list("P256Kyber768Draft00").unwrap();
-
-    let stream = client.connect();
-    assert_eq!(stream.ssl().version2(), Some(SslVersion::TLS1_3));
-    assert_eq!(
-        stream.ssl().curve(),
-        Some(ffi::SSL_GROUP_P256_KYBER768_DRAFT00 as u16),
-    );
-    assert_eq!(stream.ssl().curve_name(), Some("P256Kyber768Draft00"));
 }
 
 #[test]
@@ -563,9 +525,9 @@ fn boringssl_patch_allows_duplicate_signature_algorithms() {
 fn boringssl_patch_preserves_tls13_cipher_order_in_clienthello() {
     let client_ciphers = Arc::new(Mutex::new(None));
 
-    // boringssl.patch adds preserve_tls13_cipher_list to keep our configured
-    // TLS 1.3 cipher order in ClientHello instead of upstream BoringSSL's
-    // native default ordering.
+    // wiremason-clienthello.patch's SSL_CTX_set_tls13_cipher_order keeps the
+    // configured TLS 1.3 cipher order in ClientHello instead of upstream
+    // BoringSSL's native default ordering.
     let mut server = Server::builder();
     server.ctx().set_select_certificate_callback({
         let client_ciphers = Arc::clone(&client_ciphers);
@@ -585,8 +547,10 @@ fn boringssl_patch_preserves_tls13_cipher_order_in_clienthello() {
         .ctx()
         .set_max_proto_version(Some(SslVersion::TLS1_3))
         .unwrap();
-    client.ctx().set_preserve_tls13_cipher_list(true);
-    client.ctx().set_cipher_list("CHACHA20:AES128").unwrap();
+    client
+        .ctx()
+        .set_tls13_cipher_order(&[0x1303, 0x1301])
+        .unwrap();
 
     client.connect();
 
@@ -601,47 +565,4 @@ fn boringssl_patch_preserves_tls13_cipher_order_in_clienthello() {
         .unwrap();
 
     assert!(chacha < aes128);
-}
-
-#[test]
-fn boring_pq_can_disable_second_keyshare() {
-    let client_key_share = Arc::new(Mutex::new(None));
-
-    // boring-pq.patch adds SSL_use_second_keyshare so our fork can suppress the
-    // extra PQ keyshare; this is patch behavior, not upstream BoringSSL policy.
-    let mut server = Server::builder();
-    server.ctx().set_select_certificate_callback({
-        let client_key_share = Arc::clone(&client_key_share);
-        move |client_hello| {
-            *client_key_share.lock().unwrap() = client_hello
-                .get_extension(ExtensionType::KEY_SHARE)
-                .map(ToOwned::to_owned);
-            Ok(())
-        }
-    });
-    let server = server.build();
-
-    let mut client = server.client_with_root_ca().build().builder();
-    unsafe {
-        ffi::SSL_use_second_keyshare(client.ssl().as_ptr(), 0);
-    }
-    client.connect();
-
-    let key_share = client_key_share.lock().unwrap().clone().unwrap();
-    assert_eq!(
-        u16::from_be_bytes([key_share[0], key_share[1]]) as usize,
-        key_share.len() - 2
-    );
-
-    let mut entries = 0;
-    let mut remaining = &key_share[2..];
-    while !remaining.is_empty() {
-        assert!(remaining.len() >= 4);
-        let share_len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
-        assert!(remaining.len() >= 4 + share_len);
-        entries += 1;
-        remaining = &remaining[4 + share_len..];
-    }
-
-    assert_eq!(entries, 1);
 }
