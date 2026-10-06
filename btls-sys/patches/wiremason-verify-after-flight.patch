@@ -44,7 +44,7 @@ index 2eff701..4f8ea8c 100644
  // |SSL_CTX_set_verify|.
  OPENSSL_EXPORT int SSL_CTX_get_verify_mode(const SSL_CTX *ctx);
 diff --git a/ssl/handshake_client.cc b/ssl/handshake_client.cc
-index 4734d4f..dbaa5c1 100644
+index 4734d4f..a2ee05d 100644
 --- a/ssl/handshake_client.cc
 +++ b/ssl/handshake_client.cc
 @@ -1020,6 +1020,15 @@ static enum ssl_hs_wait_t do_verify_server_certificate(SSL_HANDSHAKE *hs) {
@@ -63,17 +63,45 @@ index 4734d4f..dbaa5c1 100644
    switch (ssl_verify_peer_cert(hs)) {
      case ssl_verify_ok:
        break;
-@@ -1030,7 +1039,8 @@ static enum ssl_hs_wait_t do_verify_server_certificate(SSL_HANDSHAKE *hs) {
+@@ -1030,7 +1039,14 @@ static enum ssl_hs_wait_t do_verify_server_certificate(SSL_HANDSHAKE *hs) {
        return ssl_hs_certificate_verify;
    }
  
 -  hs->state = state_read_server_key_exchange;
++  if (hs->bad_server_signature) {
++    OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_SIGNATURE);
++    ssl_send_alert(hs->ssl, SSL3_AL_FATAL, SSL_AD_DECRYPT_ERROR);
++    return ssl_hs_error;
++  }
++
 +  hs->state = hs->verify_deferred ? state_send_client_certificate
 +                                  : state_read_server_key_exchange;
    return ssl_hs_ok;
  }
  
-@@ -1364,7 +1374,8 @@ static enum ssl_hs_wait_t do_read_server_hello_done(SSL_HANDSHAKE *hs) {
+@@ -1244,10 +1260,17 @@ static enum ssl_hs_wait_t do_read_server_key_exchange(SSL_HANDSHAKE *hs) {
+ 
+     if (!ssl_public_key_verify(ssl, signature, signature_algorithm,
+                                hs->peer_pubkey.get(), transcript_data)) {
+-      // bad signature
+-      OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_SIGNATURE);
+-      ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECRYPT_ERROR);
+-      return ssl_hs_error;
++      // WireMason: verifying after the server's flight, the certificate's
++      // verification comes first (see |do_verify_server_certificate|).
++      if (hs->verify_deferred) {
++        ERR_clear_error();
++        hs->bad_server_signature = true;
++      } else {
++        // bad signature
++        OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_SIGNATURE);
++        ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECRYPT_ERROR);
++        return ssl_hs_error;
++      }
+     }
+   } else {
+     // PSK ciphers are the only supported certificate-less ciphers.
+@@ -1364,7 +1387,8 @@ static enum ssl_hs_wait_t do_read_server_hello_done(SSL_HANDSHAKE *hs) {
    }
  
    ssl->method->next_message(ssl);
@@ -84,7 +112,7 @@ index 4734d4f..dbaa5c1 100644
  }
  
 diff --git a/ssl/internal.h b/ssl/internal.h
-index 842bf19..f4cfc74 100644
+index 842bf19..625c18f 100644
 --- a/ssl/internal.h
 +++ b/ssl/internal.h
 @@ -1211,6 +1211,12 @@ bool tls13_set_traffic_key(SSL *ssl, enum ssl_encryption_level_t level,
@@ -100,7 +128,7 @@ index 842bf19..f4cfc74 100644
  // tls13_derive_early_secret derives the early traffic secret. It returns true
  // on success and false on error.
  bool tls13_derive_early_secret(SSL_HANDSHAKE *hs);
-@@ -1939,6 +1945,11 @@ struct SSL_HANDSHAKE {
+@@ -1939,6 +1945,16 @@ struct SSL_HANDSHAKE {
    // ServerKeyExchange.
    Array<uint8_t> dh_p, dh_g;
  
@@ -109,10 +137,15 @@ index 842bf19..f4cfc74 100644
 +  // |SSL_set_verify_after_server_flight|).
 +  bool verify_deferred = false;
 +
++  // bad_server_signature, on clients verifying after the server's flight, is
++  // whether its ServerKeyExchange or CertificateVerify signature failed, which
++  // fails the handshake once its certificate verified, as when verifying first.
++  bool bad_server_signature = false;
++
    // dhe_key, on servers, is the Diffie-Hellman key of a TLS 1.2 DHE
    // ServerKeyExchange.
    UniquePtr<DH> dhe_key;
-@@ -3505,6 +3516,11 @@ struct SSL_CONFIG {
+@@ -3505,6 +3521,11 @@ struct SSL_CONFIG {
    // TLS 1.2 DHE ServerKeyExchange may name (see |SSL_set_min_dhe_bits|).
    uint16_t min_dhe_bits = 2048;
  
@@ -213,8 +246,26 @@ index 8de5618..8bffc0f 100644
  void SSL_CTX_enable_signed_cert_timestamps(SSL_CTX *ctx) {
    ctx->signed_cert_timestamps_enabled = true;
  }
+diff --git a/ssl/tls13_both.cc b/ssl/tls13_both.cc
+index 957ad6e..0e506a9 100644
+--- a/ssl/tls13_both.cc
++++ b/ssl/tls13_both.cc
+@@ -522,6 +522,13 @@ bool tls13_process_certificate_verify(SSL_HANDSHAKE *hs,
+ 
+   if (!ssl_public_key_verify(ssl, signature, signature_algorithm,
+                              hs->peer_pubkey.get(), input)) {
++    // WireMason: a client verifying after the server's flight verifies the
++    // certificate before this fails the handshake.
++    if (hs->verify_deferred) {
++      ERR_clear_error();
++      hs->bad_server_signature = true;
++      return true;
++    }
+     OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_SIGNATURE);
+     ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_DECRYPT_ERROR);
+     return false;
 diff --git a/ssl/tls13_client.cc b/ssl/tls13_client.cc
-index 2c7850a..3a98bea 100644
+index 2c7850a..5c3b47c 100644
 --- a/ssl/tls13_client.cc
 +++ b/ssl/tls13_client.cc
 @@ -44,6 +44,7 @@ enum client_hs_state_t {
@@ -254,7 +305,7 @@ index 2c7850a..3a98bea 100644
    }
  
    if (!ssl_check_message_type(ssl, msg, SSL3_MT_CERTIFICATE_VERIFY) ||
-@@ -925,6 +932,21 @@ static enum ssl_hs_wait_t do_read_server_finished(SSL_HANDSHAKE *hs) {
+@@ -925,6 +932,26 @@ static enum ssl_hs_wait_t do_read_server_finished(SSL_HANDSHAKE *hs) {
    }
  
    ssl->method->next_message(ssl);
@@ -273,10 +324,15 @@ index 2c7850a..3a98bea 100644
 +      hs->tls13_state = state_verify_server_certificate;
 +      return ssl_hs_certificate_verify;
 +  }
++  if (hs->bad_server_signature) {
++    OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_SIGNATURE);
++    ssl_send_alert(hs->ssl, SSL3_AL_FATAL, SSL_AD_DECRYPT_ERROR);
++    return ssl_hs_error;
++  }
    hs->tls13_state = state_send_end_of_early_data;
    return ssl_hs_ok;
  }
-@@ -1250,6 +1272,9 @@ enum ssl_hs_wait_t tls13_client_handshake(SSL_HANDSHAKE *hs) {
+@@ -1250,6 +1277,9 @@ enum ssl_hs_wait_t tls13_client_handshake(SSL_HANDSHAKE *hs) {
        case state_read_server_finished:
          ret = do_read_server_finished(hs);
          break;
@@ -286,7 +342,7 @@ index 2c7850a..3a98bea 100644
        case state_send_end_of_early_data:
          ret = do_send_end_of_early_data(hs);
          break;
-@@ -1304,6 +1329,8 @@ const char *tls13_client_handshake_state(SSL_HANDSHAKE *hs) {
+@@ -1304,6 +1334,8 @@ const char *tls13_client_handshake_state(SSL_HANDSHAKE *hs) {
        return "TLS 1.3 client server_certificate_reverify";
      case state_read_server_finished:
        return "TLS 1.3 client read_server_finished";
