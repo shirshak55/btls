@@ -4719,7 +4719,8 @@ impl<S: Read + Write> SslStream<S> {
     }
 
     /// Sends the fatal alert `description`, even in the middle of a handshake; no other
-    /// alert is sent after it. Retried after `WANT_WRITE`, it sends the same alert.
+    /// alert is sent after it. Retried after `WANT_WRITE`, it sends the same alert. A write
+    /// left unfinished is abandoned, the record it sealed sent ahead of the alert.
     #[corresponds(SSL_send_fatal_alert)]
     pub fn send_fatal_alert(&mut self, description: u8) -> Result<(), Error> {
         match unsafe { ffi::SSL_send_fatal_alert(self.ssl.as_ptr(), description) } {
